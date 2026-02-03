@@ -140,6 +140,27 @@ Narrower grids have their last column repeated to fill gaps."
                                 (append row (make-list (- max-cols (length row)) last-win))))
                             grid))))
 
+(defun spatial-window--window-info (&optional frame)
+  "Return alist of window info for FRAME (default: selected frame).
+Each entry is (window :h-pct H :v-pct V :grid GRID) where:
+  :h-pct - horizontal percentage of frame width (0.0-1.0)
+  :v-pct - vertical percentage of frame height (0.0-1.0)
+  :grid  - the 2D grid with spanning windows filled"
+  (let* ((frame (or frame (selected-frame)))
+         (frame-w (frame-pixel-width frame))
+         (frame-h (frame-pixel-height frame))
+         (grid (spatial-window--window-grid frame))
+         (windows (delete-dups (apply #'append grid))))
+    (cons (cons :grid grid)
+          (mapcar (lambda (win)
+                    (let* ((edges (window-pixel-edges win))
+                           (w (- (nth 2 edges) (nth 0 edges)))
+                           (h (- (nth 3 edges) (nth 1 edges))))
+                      (list win
+                            :h-pct (/ (float w) frame-w)
+                            :v-pct (/ (float h) frame-h))))
+                  windows))))
+
 (defun spatial-window--find-window-for-key (key)
   "Find the window that best matches KEY's position on the keyboard."
   (let* ((key-pos (spatial-window--key-position key))
