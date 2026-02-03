@@ -141,25 +141,30 @@ Narrower grids have their last column repeated to fill gaps."
                             grid))))
 
 (defun spatial-window--window-info (&optional frame)
-  "Return alist of window info for FRAME (default: selected frame).
-Each entry is (window :h-pct H :v-pct V :grid GRID) where:
-  :h-pct - horizontal percentage of frame width (0.0-1.0)
-  :v-pct - vertical percentage of frame height (0.0-1.0)
-  :grid  - the 2D grid with spanning windows filled"
+  "Return 2D grid with window info for FRAME (default: selected frame).
+Each cell is a plist (:window W :h-pct H :v-pct V) where:
+  :window - the window object
+  :h-pct  - horizontal percentage of frame width (0.0-1.0)
+  :v-pct  - vertical percentage of frame height (0.0-1.0)
+Spanning windows appear in all cells they occupy."
   (let* ((frame (or frame (selected-frame)))
          (frame-w (frame-pixel-width frame))
          (frame-h (frame-pixel-height frame))
          (grid (spatial-window--window-grid frame))
-         (windows (delete-dups (apply #'append grid))))
-    (cons (cons :grid grid)
-          (mapcar (lambda (win)
-                    (let* ((edges (window-pixel-edges win))
-                           (w (- (nth 2 edges) (nth 0 edges)))
-                           (h (- (nth 3 edges) (nth 1 edges))))
-                      (list win
-                            :h-pct (/ (float w) frame-w)
-                            :v-pct (/ (float h) frame-h))))
-                  windows))))
+         (info-cache (make-hash-table :test 'eq)))
+    (mapcar (lambda (row)
+              (mapcar (lambda (win)
+                        (or (gethash win info-cache)
+                            (let* ((edges (window-pixel-edges win))
+                                   (w (- (nth 2 edges) (nth 0 edges)))
+                                   (h (- (nth 3 edges) (nth 1 edges)))
+                                   (info (list :window win
+                                               :h-pct (/ (float w) frame-w)
+                                               :v-pct (/ (float h) frame-h))))
+                              (puthash win info info-cache)
+                              info)))
+                      row))
+            grid)))
 
 (defun spatial-window--find-window-for-key (key)
   "Find the window that best matches KEY's position on the keyboard."
