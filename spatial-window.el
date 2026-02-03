@@ -98,6 +98,48 @@ POS is (x . y), MAX-POS is (max-x . max-y)."
   "Return the dimensions (width . height) of the current frame in pixels."
   (cons (frame-pixel-width) (frame-pixel-height)))
 
+(defun spatial-window--window-grid (&optional frame)
+  "Return a 2D grid of windows for FRAME (default: selected frame).
+The grid is a list of rows, each row a list of windows.
+Spanning windows appear in all cells they occupy."
+  (spatial-window--tree-to-grid (car (window-tree frame))))
+
+(defun spatial-window--tree-to-grid (tree)
+  "Convert window TREE to a 2D grid of windows."
+  (cond
+   ((windowp tree)
+    (list (list tree)))
+   ((consp tree)
+    (let ((horizontal-p (car tree))
+          (children (cddr tree)))
+      (if horizontal-p
+          (spatial-window--merge-horizontal
+           (mapcar #'spatial-window--tree-to-grid children))
+        (spatial-window--merge-vertical
+         (mapcar #'spatial-window--tree-to-grid children)))))
+   (t (list (list tree)))))
+
+(defun spatial-window--merge-horizontal (grids)
+  "Merge GRIDS horizontally (side by side).
+Shorter grids have their last row repeated to fill gaps."
+  (let ((max-rows (apply #'max (mapcar #'length grids))))
+    (cl-loop for row-idx below max-rows
+             collect (cl-loop for grid in grids
+                              append (or (nth row-idx grid)
+                                         (car (last grid)))))))
+
+(defun spatial-window--merge-vertical (grids)
+  "Merge GRIDS vertically (stacked).
+Narrower grids have their last column repeated to fill gaps."
+  (let ((max-cols (apply #'max (mapcar (lambda (g)
+                                         (apply #'max (mapcar #'length g)))
+                                       grids))))
+    (cl-loop for grid in grids
+             append (mapcar (lambda (row)
+                              (let ((last-win (car (last row))))
+                                (append row (make-list (- max-cols (length row)) last-win))))
+                            grid))))
+
 (defun spatial-window--find-window-for-key (key)
   "Find the window that best matches KEY's position on the keyboard."
   (let* ((key-pos (spatial-window--key-position key))
