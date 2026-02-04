@@ -73,6 +73,32 @@
         ;; Bottom-left: bottom row left half
         (should (seq-set-equal-p bottom-left-keys '("z" "x" "c" "v" "b")))))))
 
+(ert-deftest spatial-window-test-assign-keys-unbalanced-split ()
+  "75/25 vertical split: larger window gets middle row, smaller gets bottom only."
+  (let* ((win-top 'win-top)
+         (win-bottom 'win-bottom)
+         ;; Mock grid: 2 rows, 1 col, 75/25 split
+         (mock-grid `(((:window ,win-top :h-pct 1.0 :v-pct 0.75))
+                      ((:window ,win-bottom :h-pct 1.0 :v-pct 0.25))))
+         ;; Cell percentages: 1 col 100%, 2 rows 75/25
+         (mock-cell-pcts '((1.0) . (0.75 0.25))))
+    (cl-letf (((symbol-function 'spatial-window--window-info)
+               (lambda (&optional _frame) mock-grid))
+              ((symbol-function 'spatial-window--cell-percentages)
+               (lambda (&optional _frame _geom) mock-cell-pcts)))
+      (let* ((result (spatial-window--assign-keys))
+             (top-keys (cdr (assq win-top result)))
+             (bottom-keys (cdr (assq win-bottom result)))
+             (middle-row '("a" "s" "d" "f" "g" "h" "j" "k" "l" ";")))
+        ;; Top window (75%) should get top AND middle rows = 20 keys
+        (should (= (length top-keys) 20))
+        ;; Top window includes middle row
+        (should (seq-set-equal-p (seq-intersection top-keys middle-row) middle-row))
+        ;; Bottom window (25%) gets only bottom row = 10 keys
+        (should (= (length bottom-keys) 10))
+        ;; Bottom window should NOT have middle row
+        (should (null (seq-intersection bottom-keys middle-row)))))))
+
 (ert-deftest spatial-window-test-assign-keys-single-window ()
   "Single window gets all keys."
   (let* ((win 'win)

@@ -208,8 +208,8 @@ Spanning windows appear in all cells they occupy."
 (defun spatial-window--assign-keys (&optional frame)
   "Assign keyboard keys to windows based on their layout.
 Returns alist of (window . (list of keys)).
-When a column has exactly 2 windows and the keyboard has 3 rows, the
-middle row is skipped for that column to improve the spatial mapping."
+When a column has exactly 2 roughly-equal windows and the keyboard has 3 rows,
+the middle row is skipped for that column to improve the spatial mapping."
   (let ((kbd-layout (spatial-window--get-layout)))
     ;; Validate keyboard layout: all rows must have same length
     (unless (apply #'= (mapcar #'length kbd-layout))
@@ -222,14 +222,16 @@ middle row is skipped for that column to improve the spatial mapping."
              (grid-cols (length (car info-grid)))
              (kbd-rows (length kbd-layout))
              (kbd-cols (length (car kbd-layout)))
-             ;; Count distinct windows per grid column (for row skipping)
-             (windows-per-col (spatial-window--count-distinct-per-column info-grid))
              ;; Get actual cell percentages (not window percentages)
              (cell-pcts (spatial-window--cell-percentages frame geom))
              ;; Build column boundaries based on cell widths
              (col-boundaries (spatial-window--compute-boundaries (car cell-pcts) kbd-cols))
              ;; Build row boundaries based on cell heights
              (row-boundaries (spatial-window--compute-boundaries (cdr cell-pcts) kbd-rows))
+             ;; Check which columns have balanced 2-window splits (for row skipping)
+             (balanced-cols (cl-loop for col below grid-cols
+                                     collect (spatial-window--column-windows-balanced-p
+                                              info-grid col (cdr cell-pcts))))
              (result (make-hash-table :test 'eq)))
         ;; Check if we have too many windows for the keyboard layout
         (if (not (and col-boundaries row-boundaries))
@@ -252,9 +254,9 @@ middle row is skipped for that column to improve the spatial mapping."
                    do (cl-loop for kbd-col from 0 below kbd-cols
                                for grid-col = (spatial-window--boundary-lookup kbd-col col-boundaries)
                                for grid-row = (spatial-window--boundary-lookup kbd-row row-boundaries)
-                               for distinct-in-col = (nth grid-col windows-per-col)
-                               ;; Skip middle row if this column has exactly 2 windows
-                               unless (and (= kbd-row (/ kbd-rows 2)) (= distinct-in-col 2))
+                               for balanced-p = (nth grid-col balanced-cols)
+                               ;; Skip middle row only if column has 2 balanced windows
+                               unless (and (= kbd-row (/ kbd-rows 2)) balanced-p)
                                do (let* ((key (nth kbd-col (nth kbd-row kbd-layout)))
                                          (info (nth grid-col (nth grid-row info-grid)))
                                          (win (plist-get info :window)))
@@ -274,6 +276,26 @@ middle row is skipped for that column to improve the spatial mapping."
                               (mapcar (lambda (row)
                                         (plist-get (nth col row) :window))
                                       grid))))))
+
+(defun spatial-window--column-windows-balanced-p (grid col row-pcts)
+  "Return non-nil if column COL has 2 windows of roughly equal height.
+GRID is the window info grid, ROW-PCTS is the list of row height percentages.
+Returns t if both windows are between 40% and 60% of the column height."
+  (let* ((windows (seq-uniq (mapcar (lambda (row)
+                                      (plist-get (nth col row) :window))
+                                    grid)))
+         (win-heights (make-hash-table :test 'eq)))
+    (when (= (length windows) 2)
+      ;; Sum up row percentages for each window
+      (cl-loop for row in grid
+               for pct in row-pcts
+               for win = (plist-get (nth col row) :window)
+               do (puthash win (+ (gethash win win-heights 0) pct) win-heights))
+      ;; Check if both windows are between 40-60%
+      (let ((h1 (gethash (car windows) win-heights))
+            (h2 (gethash (cadr windows) win-heights)))
+        (and (>= h1 0.4) (<= h1 0.6)
+             (>= h2 0.4) (<= h2 0.6))))))
 
 (defun spatial-window--compute-boundaries (percentages key-count)
   "Compute grid cell boundaries based on PERCENTAGES for KEY-COUNT keys.
