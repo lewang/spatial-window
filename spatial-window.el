@@ -110,46 +110,44 @@ POS is (x . y), MAX-POS is (max-x . max-y)."
   (cons (frame-pixel-width) (frame-pixel-height)))
 
 (defun spatial-window--window-grid (&optional frame)
-  "Return a 2D grid of windows for FRAME (default: selected frame).
+  "Return a 2D grid of windows for FRAME based on pixel positions.
 The grid is a list of rows, each row a list of windows.
 Spanning windows appear in all cells they occupy."
-  (spatial-window--tree-to-grid (car (window-tree frame))))
-
-(defun spatial-window--tree-to-grid (tree)
-  "Convert window TREE to a 2D grid of windows."
-  (cond
-   ((windowp tree)
-    (list (list tree)))
-   ((consp tree)
-    (let ((horizontal-p (car tree))
-          (children (cddr tree)))
-      (if horizontal-p
-          (spatial-window--merge-horizontal
-           (mapcar #'spatial-window--tree-to-grid children))
-        (spatial-window--merge-vertical
-         (mapcar #'spatial-window--tree-to-grid children)))))
-   (t (list (list tree)))))
-
-(defun spatial-window--merge-horizontal (grids)
-  "Merge GRIDS horizontally (left-right split).
-Shorter grids have their last row repeated to fill gaps."
-  (let ((max-rows (apply #'max (mapcar #'length grids))))
-    (cl-loop for row-idx below max-rows
-             collect (cl-loop for grid in grids
-                              append (or (nth row-idx grid)
-                                         (car (last grid)))))))
-
-(defun spatial-window--merge-vertical (grids)
-  "Merge GRIDS vertically (top-bottom split).
-Narrower grids have their last column repeated to fill gaps."
-  (let ((max-cols (apply #'max (mapcar (lambda (g)
-                                         (apply #'max (mapcar #'length g)))
-                                       grids))))
-    (cl-loop for grid in grids
-             append (mapcar (lambda (row)
-                              (let ((last-win (car (last row))))
-                                (append row (make-list (- max-cols (length row)) last-win))))
-                            grid))))
+  (let* ((windows (window-list frame 'no-minibuf))
+         (edges-list (mapcar (lambda (w)
+                               (cons w (window-pixel-edges w)))
+                             windows))
+         ;; Collect unique x and y boundaries
+         (x-coords (sort (delete-dups
+                          (apply #'append
+                                 (mapcar (lambda (we)
+                                           (list (nth 1 we) (nth 3 we)))
+                                         edges-list)))
+                         #'<))
+         (y-coords (sort (delete-dups
+                          (apply #'append
+                                 (mapcar (lambda (we)
+                                           (list (nth 2 we) (nth 4 we)))
+                                         edges-list)))
+                         #'<))
+         ;; Build grid by finding window at each cell
+         (grid nil))
+    (dolist (y (butlast y-coords))
+      (let ((row nil))
+        (dolist (x (butlast x-coords))
+          (let ((found nil))
+            (dolist (we edges-list)
+              (let* ((w (car we))
+                     (left (nth 1 we))
+                     (top (nth 2 we))
+                     (right (nth 3 we))
+                     (bottom (nth 4 we)))
+                (when (and (>= x left) (< x right)
+                           (>= y top) (< y bottom))
+                  (setq found w))))
+            (push found row)))
+        (push (nreverse row) grid)))
+    (nreverse grid)))
 
 (defun spatial-window--window-info (&optional frame)
   "Return 2D grid with window info for FRAME (default: selected frame).
@@ -337,6 +335,8 @@ Returns a string showing which keys are assigned, displayed in keyboard layout."
   "Display key hints as posframes in all windows.
 Returns the key assignments alist for use in selection."
   (require 'posframe)
+  ;; Clean up any existing posframes first
+  (spatial-window--remove-overlays)
   (setq spatial-window--posframe-buffers nil)
   (let ((assignments (spatial-window--assign-keys))
         (idx 0))
@@ -350,12 +350,15 @@ Returns the key assignments alist for use in selection."
              (top (nth 1 edges)))
         (setq idx (1+ idx))
         (push buf-name spatial-window--posframe-buffers)
-        (posframe-show buf-name
-                       :string grid-str
-                       :poshandler (lambda (_info) (cons left top))
-                       :foreground-color (face-foreground 'spatial-window-overlay-face nil t)
-                       :background-color (face-background 'spatial-window-overlay-face nil t)
-                       :internal-border-width 4)))
+        (with-current-buffer (get-buffer-create buf-name)
+          (erase-buffer)
+          (insert grid-str))
+        (let ((x left) (y top))  ; explicit rebinding for closure
+          (posframe-show buf-name
+                         :poshandler (lambda (_info) (cons x y))
+                         :foreground-color (face-foreground 'spatial-window-overlay-face nil t)
+                         :background-color (face-background 'spatial-window-overlay-face nil t)
+                         :internal-border-width 4))))
     assignments))
 
 (defun spatial-window--remove-overlays ()
@@ -398,7 +401,7 @@ Shows keyboard grid overlays in each window during selection."
       (spatial-window--show-overlays)
       (set-transient-map
        (spatial-window--make-selection-keymap)
-       t
+       nil
        #'spatial-window--remove-overlays))))
 
 (provide 'spatial-window)
