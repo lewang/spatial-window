@@ -430,9 +430,8 @@ If minibuffer is active, SPC selects it."
 (defun spatial-window--kill-mode-message ()
   "Display kill mode status message."
   (let ((n (length spatial-window--selected-windows)))
-    (if (zerop n)
-        (message "Kill mode: select windows, RET to kill, C-g to abort")
-      (message "Kill mode: %d window(s) selected. RET to kill, C-g to abort" n))))
+    (message "<enter> to kill %d window%s. C-g to abort."
+             n (if (= n 1) "" "s"))))
 
 (defun spatial-window--toggle-selection ()
   "Toggle the selection of the window corresponding to the pressed key."
