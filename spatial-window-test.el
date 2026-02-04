@@ -161,6 +161,40 @@
         ;; Mid-bot: cols 2-7, bottom row only
         (should (seq-set-equal-p mid-bot-keys '("c" "v" "b" "n" "m" ",")))))))
 
+(ert-deftest spatial-window-test-assign-keys-wide-main-narrow-sidebar ()
+  "Wide main window (~90%) with narrow sidebar (~10%) split top-bottom."
+  ;; Layout: |     main (90%)      | top (10%) |
+  ;;         |                     +-----------|
+  ;;         |                     | bot (10%) |
+  (let* ((win-main 'win-main)
+         (win-sidebar-top 'win-sidebar-top)
+         (win-sidebar-bot 'win-sidebar-bot)
+         ;; 2 rows, 2 cols: main spans left column, sidebar split on right
+         (mock-grid `(((:window ,win-main :h-pct 0.90 :v-pct 1.0)
+                       (:window ,win-sidebar-top :h-pct 0.10 :v-pct 0.5))
+                      ((:window ,win-main :h-pct 0.90 :v-pct 1.0)
+                       (:window ,win-sidebar-bot :h-pct 0.10 :v-pct 0.5)))))
+    (cl-letf (((symbol-function 'spatial-window--window-info)
+               (lambda (&optional _frame) mock-grid)))
+      (let* ((result (spatial-window--assign-keys))
+             (main-keys (cdr (assq win-main result)))
+             (top-keys (cdr (assq win-sidebar-top result)))
+             (bot-keys (cdr (assq win-sidebar-bot result)))
+             (middle-row '("a" "s" "d" "f" "g" "h" "j" "k" "l" ";")))
+        ;; Main window: 90% = cols 0-8, all 3 rows (only 1 window in left col)
+        (should (seq-set-equal-p main-keys
+                                 '("q" "w" "e" "r" "t" "y" "u" "i" "o"
+                                   "a" "s" "d" "f" "g" "h" "j" "k" "l"
+                                   "z" "x" "c" "v" "b" "n" "m" "," ".")))
+        ;; Sidebar: 10% = col 9 only, split top-bottom so middle row skipped
+        (should (seq-set-equal-p top-keys '("p")))
+        (should (seq-set-equal-p bot-keys '("/")))
+        ;; Verify middle row goes entirely to main
+        (should (seq-set-equal-p (seq-intersection main-keys middle-row)
+                                 '("a" "s" "d" "f" "g" "h" "j" "k" "l")))
+        (should-not (seq-intersection top-keys middle-row))
+        (should-not (seq-intersection bot-keys middle-row))))))
+
 (provide 'spatial-window-test)
 
 ;;; spatial-window-test.el ends here
