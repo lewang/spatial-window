@@ -349,18 +349,23 @@ Returns a string showing which keys are assigned, displayed in keyboard layout."
 (defun spatial-window--show-overlays ()
   "Display key overlays on all windows.
 Returns the key assignments alist for use in selection."
-  (let ((assignments (spatial-window--assign-keys)))
+  (let ((assignments (spatial-window--assign-keys))
+        (window-starts (mapcar (lambda (w) (cons w (window-start w)))
+                               (spatial-window--frame-windows))))
     (dolist (pair assignments)
       (let* ((window (car pair))
              (keys (cdr pair))
-             (grid-str (spatial-window--format-key-grid keys))
+             (grid-str (concat (spatial-window--format-key-grid keys) "\n"))
              (pos (spatial-window--get-overlay-position window))
              (buf (window-buffer window))
-             (ol (make-overlay pos (min (1+ pos) (with-current-buffer buf (point-max))) buf)))
-        (overlay-put ol 'display grid-str)
-        (overlay-put ol 'face 'spatial-window-overlay-face)
+             (ol (make-overlay pos pos buf)))
+        (overlay-put ol 'before-string (propertize grid-str 'face 'spatial-window-overlay-face))
+        (overlay-put ol 'window window)
         (overlay-put ol 'priority 1000)
         (push ol spatial-window--overlays)))
+    ;; Restore window positions to prevent scrolling
+    (dolist (ws window-starts)
+      (set-window-start (car ws) (cdr ws) t))
     assignments))
 
 (defun spatial-window--remove-overlays ()
