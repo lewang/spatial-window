@@ -250,18 +250,28 @@ For 2-way splits, skip middle index."
 
 (defun spatial-window--compute-boundaries (percentages key-count)
   "Compute grid cell boundaries based on PERCENTAGES for KEY-COUNT keys.
-Returns list of (start-key . end-key) for each grid cell, non-overlapping."
-  (let* ((cumulative 0.0)
-         (prev-end -1)
+Returns list of (start-key . end-key) for each grid cell, non-overlapping.
+Each cell is guaranteed at least 1 key."
+  (let* ((n (length percentages))
          (boundaries nil))
-    (dolist (pct percentages)
-      (let* ((end (+ cumulative pct))
-             (start-key (1+ prev-end))
-             (end-key (max start-key (1- (round (* end key-count))))))
-        (push (cons start-key end-key) boundaries)
-        (setq prev-end end-key)
-        (setq cumulative end)))
-    (nreverse boundaries)))
+    (if (> n key-count)
+        ;; More cells than keys: error case
+        (error "Cannot assign keys: %d cells but only %d keys" n key-count)
+      ;; Distribute keys: each cell gets at least 1, remainder by percentage
+      (let* ((remainder (- key-count n))
+             (prev-end -1))
+        (dolist (pct percentages)
+          (let* ((extra-keys (round (* pct remainder)))
+                 (cell-keys (1+ extra-keys))  ; At least 1 + proportional share
+                 (start-key (1+ prev-end))
+                 (end-key (+ start-key cell-keys -1)))
+            (push (cons start-key end-key) boundaries)
+            (setq prev-end end-key)))
+        ;; Adjust last boundary to cover remaining keys
+        (let* ((boundaries-rev boundaries)
+               (last-boundary (car boundaries-rev)))
+          (setcar boundaries-rev (cons (car last-boundary) (1- key-count))))
+        (nreverse boundaries)))))
 
 (defun spatial-window--boundary-lookup (key-idx boundaries)
   "Find which grid cell KEY-IDX falls into based on BOUNDARIES."

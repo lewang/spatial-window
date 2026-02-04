@@ -154,12 +154,70 @@
              (right-keys (cdr (assq win-right result))))
         ;; Left: cols 0-1, all 3 rows (spans full height)
         (should (seq-set-equal-p left-keys '("q" "w" "a" "s" "z" "x")))
-        ;; Right: cols 8-9, all 3 rows (spans full height)
-        (should (seq-set-equal-p right-keys '("o" "p" "l" ";" "." "/")))
-        ;; Mid-top: cols 2-7, top row only (middle row skipped for 2-way split)
-        (should (seq-set-equal-p mid-top-keys '("e" "r" "t" "y" "u" "i")))
-        ;; Mid-bot: cols 2-7, bottom row only
-        (should (seq-set-equal-p mid-bot-keys '("c" "v" "b" "n" "m" ",")))))))
+        ;; Right: cols 7-9, all 3 rows (spans full height)
+        (should (seq-set-equal-p right-keys '("i" "o" "p" "k" "l" ";" "," "." "/")))
+        ;; Mid-top: cols 2-6, top row only (middle row skipped for 2-way split)
+        (should (seq-set-equal-p mid-top-keys '("e" "r" "t" "y" "u")))
+        ;; Mid-bot: cols 2-6, bottom row only
+        (should (seq-set-equal-p mid-bot-keys '("c" "v" "b" "n" "m")))))))
+
+(ert-deftest spatial-window-test-assign-keys-extreme-split ()
+  "User's config: 95.5%/4.2% with 92%/6% sidebar split. All windows get keys."
+  (let* ((win-main 'win-main)
+         (win-sidebar-top 'win-sidebar-top)
+         (win-sidebar-bot 'win-sidebar-bot)
+         (mock-grid `(((:window ,win-main :h-pct 0.9554485249849488 :v-pct 0.9806659505907627)
+                       (:window ,win-main :h-pct 0.9554485249849488 :v-pct 0.9806659505907627))
+                      ((:window ,win-sidebar-top :h-pct 0.04214328717639976 :v-pct 0.920515574650913)
+                       (:window ,win-sidebar-bot :h-pct 0.04214328717639976 :v-pct 0.06015037593984962)))))
+    (cl-letf (((symbol-function 'spatial-window--window-info)
+               (lambda (&optional _frame) mock-grid)))
+      (let* ((result (spatial-window--assign-keys))
+             (main-keys (cdr (assq win-main result)))
+             (top-keys (cdr (assq win-sidebar-top result)))
+             (bot-keys (cdr (assq win-sidebar-bot result))))
+        ;; ALL windows MUST have at least 1 key
+        (should (>= (length main-keys) 1))
+        (should (>= (length top-keys) 1))
+        (should (>= (length bot-keys) 1))))))
+
+(ert-deftest spatial-window-test-max-3-rows ()
+  "3 top-bottom windows = 3 keyboard rows, each gets exactly 1 row."
+  (let* ((win1 'win1) (win2 'win2) (win3 'win3)
+         (mock-grid `(((:window ,win1 :h-pct 1.0 :v-pct 0.33))
+                      ((:window ,win2 :h-pct 1.0 :v-pct 0.34))
+                      ((:window ,win3 :h-pct 1.0 :v-pct 0.33)))))
+    (cl-letf (((symbol-function 'spatial-window--window-info)
+               (lambda (&optional _frame) mock-grid)))
+      (let* ((result (spatial-window--assign-keys)))
+        ;; Each window gets exactly 1 row = 10 keys
+        (should (= (length (cdr (assq win1 result))) 10))
+        (should (= (length (cdr (assq win2 result))) 10))
+        (should (= (length (cdr (assq win3 result))) 10))))))
+
+(ert-deftest spatial-window-test-max-10-cols ()
+  "10 left-right windows = 10 keyboard columns, each gets 3 keys (1 col × 3 rows)."
+  ;; 10 windows each at 10% width
+  (let* ((wins (cl-loop for i below 10 collect (intern (format "win%d" i))))
+         (mock-grid `(,(cl-loop for w in wins
+                                collect `(:window ,w :h-pct 0.1 :v-pct 1.0)))))
+    (cl-letf (((symbol-function 'spatial-window--window-info)
+               (lambda (&optional _frame) mock-grid)))
+      (let* ((result (spatial-window--assign-keys)))
+        ;; Each window gets exactly 1 column = 3 keys (3 rows)
+        (dolist (w wins)
+          (should (= (length (cdr (assq w result))) 3)))))))
+
+(ert-deftest spatial-window-test-compute-boundaries-minimum-1-key ()
+  "Each cell gets at least 1 key even with tiny percentages."
+  ;; 95% / 5% split with 10 keys
+  (let ((bounds (spatial-window--compute-boundaries '(0.95 0.05) 10)))
+    ;; Both cells must have at least 1 key
+    (should (>= (1+ (- (cdr (nth 0 bounds)) (car (nth 0 bounds)))) 1))
+    (should (>= (1+ (- (cdr (nth 1 bounds)) (car (nth 1 bounds)))) 1))
+    ;; Boundaries should cover all keys 0-9
+    (should (= (car (nth 0 bounds)) 0))
+    (should (= (cdr (nth 1 bounds)) 9))))
 
 (provide 'spatial-window-test)
 
