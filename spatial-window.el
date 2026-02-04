@@ -77,6 +77,12 @@ Can be a symbol naming a preset layout or a custom list of rows."
                  (repeat :tag "Custom" (repeat string)))
   :group 'spatial-window)
 
+(defcustom spatial-window-expert-mode nil
+  "When non-nil, hide window overlays by default.
+Use \\[spatial-window--toggle-overlays] (C-h) during selection to show them."
+  :type 'boolean
+  :group 'spatial-window)
+
 (defun spatial-window--get-layout ()
   "Return the keyboard layout as a list of rows."
   (pcase spatial-window-keyboard-layout
@@ -105,6 +111,9 @@ Can be a symbol naming a preset layout or a custom list of rows."
 
 (defvar spatial-window--source-window nil
   "Source window for swap operation.")
+
+(defvar spatial-window--overlays-visible nil
+  "Whether overlays are currently visible during selection.")
 
 (defface spatial-window-selected-face
   '((t (:foreground "white" :background "red" :weight bold)))
@@ -406,24 +415,72 @@ Looks up the key in `spatial-window--current-assignments' to find the target."
   "Reset all state variables for action modes."
   (setq spatial-window--pending-action nil
         spatial-window--selected-windows nil
-        spatial-window--source-window nil))
+        spatial-window--source-window nil
+        spatial-window--overlays-visible nil))
+
+(defun spatial-window--toggle-overlays ()
+  "Toggle visibility of window overlays during selection."
+  (interactive)
+  (if spatial-window--overlays-visible
+      (progn
+        (spatial-window--remove-overlays)
+        (setq spatial-window--overlays-visible nil))
+    ;; Show overlays with appropriate highlighting
+    (let ((highlighted (cond
+                        ((eq spatial-window--pending-action 'swap)
+                         (list spatial-window--source-window))
+                        ((eq spatial-window--pending-action 'kill-multi)
+                         spatial-window--selected-windows)
+                        (t nil))))
+      (spatial-window--show-overlays highlighted))
+    (setq spatial-window--overlays-visible t)))
 
 (defun spatial-window--select-minibuffer ()
   "Select the minibuffer window."
   (interactive)
   (select-window (minibuffer-window)))
 
-(defun spatial-window--make-selection-keymap ()
-  "Build transient keymap with all keyboard layout keys.
-If minibuffer is active, SPC selects it."
+(defun spatial-window--cleanup-mode ()
+  "Clean up overlays and reset state after any mode ends."
+  (spatial-window--remove-overlays)
+  (spatial-window--reset-state))
+
+(defun spatial-window--make-mode-keymap (key-action &optional extra-bindings)
+  "Create keymap binding all layout keys to KEY-ACTION.
+EXTRA-BINDINGS is an alist of (key-string . command) for additional bindings.
+C-g and C-h are always bound to abort and toggle-overlays."
   (let ((map (make-sparse-keymap)))
     (dolist (row (spatial-window--get-layout))
       (dolist (key row)
-        (define-key map (kbd key) #'spatial-window--select-by-key)))
+        (define-key map (kbd key) key-action)))
     (define-key map (kbd "C-g") #'spatial-window--abort)
-    (when (minibuffer-window-active-p (minibuffer-window))
-      (define-key map (kbd "SPC") #'spatial-window--select-minibuffer))
+    (define-key map (kbd "C-h") #'spatial-window--toggle-overlays)
+    (dolist (binding extra-bindings)
+      (define-key map (kbd (car binding)) (cdr binding)))
     map))
+
+(defun spatial-window--setup-transient-mode (keymap &optional highlighted message keep-active)
+  "Common setup for transient selection modes.
+KEYMAP is the transient keymap to activate.
+HIGHLIGHTED is a list of windows to highlight in overlays.
+MESSAGE is displayed in the minibuffer.
+KEEP-ACTIVE if non-nil keeps the transient map active until explicitly exited."
+  (setq spatial-window--current-assignments (spatial-window--assign-keys))
+  (when spatial-window--current-assignments
+    (if spatial-window-expert-mode
+        (setq spatial-window--overlays-visible nil)
+      (spatial-window--show-overlays highlighted)
+      (setq spatial-window--overlays-visible t))
+    (when message (message "%s" message))
+    (set-transient-map keymap keep-active #'spatial-window--cleanup-mode)))
+
+(defun spatial-window--make-selection-keymap ()
+  "Build transient keymap with all keyboard layout keys.
+If minibuffer is active, SPC selects it."
+  (spatial-window--make-mode-keymap
+   #'spatial-window--select-by-key
+   (when (minibuffer-window-active-p (minibuffer-window))
+     '(("SPC" . spatial-window--select-minibuffer)))))
 
 ;;; Kill mode functions (single kill)
 
@@ -442,29 +499,13 @@ If minibuffer is active, SPC selects it."
           (delete-window win))
         (message "Killed window")))))
 
-(defun spatial-window--make-kill-keymap ()
-  "Build transient keymap for kill mode."
-  (let ((map (make-sparse-keymap)))
-    (dolist (row (spatial-window--get-layout))
-      (dolist (key row)
-        (define-key map (kbd key) #'spatial-window--kill-by-key)))
-    (define-key map (kbd "C-g") #'spatial-window--abort)
-    map))
-
-(defun spatial-window--cleanup-kill-mode ()
-  "Clean up after kill mode ends."
-  (spatial-window--remove-overlays)
-  (spatial-window--reset-state))
-
 (defun spatial-window--enter-kill-mode ()
   "Enter kill mode for deleting one window."
   (setq spatial-window--pending-action 'kill)
-  (when (spatial-window--show-overlays)
-    (message "Select window to kill. C-g to abort.")
-    (set-transient-map
-     (spatial-window--make-kill-keymap)
-     nil
-     #'spatial-window--cleanup-kill-mode)))
+  (spatial-window--setup-transient-mode
+   (spatial-window--make-mode-keymap #'spatial-window--kill-by-key)
+   nil
+   "Select window to kill. C-h for hints. C-g to abort."))
 
 ;;; Kill-multi mode functions
 
@@ -502,32 +543,17 @@ If minibuffer is active, SPC selects it."
         (delete-window win)))
     (message "Killed %d window(s)" (length windows-to-kill))))
 
-(defun spatial-window--cleanup-kill-multi-mode ()
-  "Clean up after kill-multi mode ends."
-  (spatial-window--remove-overlays)
-  (spatial-window--reset-state))
-
-(defun spatial-window--make-kill-multi-keymap ()
-  "Build transient keymap for kill-multi mode.
-Layout keys toggle selection, RET executes kill, C-g aborts."
-  (let ((map (make-sparse-keymap)))
-    (dolist (row (spatial-window--get-layout))
-      (dolist (key row)
-        (define-key map (kbd key) #'spatial-window--toggle-selection)))
-    (define-key map (kbd "RET") #'spatial-window--execute-kill-multi)
-    (define-key map (kbd "C-g") #'spatial-window--abort)
-    map))
-
 (defun spatial-window--enter-kill-multi-mode ()
   "Enter kill-multi mode for selecting multiple windows to delete."
   (setq spatial-window--pending-action 'kill-multi
         spatial-window--selected-windows nil)
-  (when (spatial-window--show-overlays)
-    (spatial-window--kill-multi-mode-message)
-    (set-transient-map
-     (spatial-window--make-kill-multi-keymap)
-     t  ; keep map active until explicitly exited
-     #'spatial-window--cleanup-kill-multi-mode)))
+  (spatial-window--setup-transient-mode
+   (spatial-window--make-mode-keymap #'spatial-window--toggle-selection
+                                     '(("RET" . spatial-window--execute-kill-multi)))
+   nil
+   nil  ; uses custom message function
+   t)   ; keep active
+  (spatial-window--kill-multi-mode-message))
 
 ;;; Swap mode functions
 
@@ -561,20 +587,6 @@ Layout keys toggle selection, RET executes kill, C-g aborts."
         (spatial-window--reset-state)
         (message "Swapped windows")))))
 
-(defun spatial-window--cleanup-swap-mode ()
-  "Clean up after swap mode ends."
-  (spatial-window--remove-overlays)
-  (spatial-window--reset-state))
-
-(defun spatial-window--make-swap-keymap ()
-  "Build transient keymap for swap mode target selection."
-  (let ((map (make-sparse-keymap)))
-    (dolist (row (spatial-window--get-layout))
-      (dolist (key row)
-        (define-key map (kbd key) #'spatial-window--select-swap-target)))
-    (define-key map (kbd "C-g") #'spatial-window--abort)
-    map))
-
 (defun spatial-window--enter-swap-mode ()
   "Enter swap mode for exchanging window buffers."
   (let ((windows (spatial-window--frame-windows)))
@@ -588,12 +600,10 @@ Layout keys toggle selection, RET executes kill, C-g aborts."
       ;; More than 2 windows: select target
       (setq spatial-window--pending-action 'swap
             spatial-window--source-window (selected-window))
-      (when (spatial-window--show-overlays (list spatial-window--source-window))
-        (message "Swap mode: select target window, C-g to abort")
-        (set-transient-map
-         (spatial-window--make-swap-keymap)
-         nil
-         #'spatial-window--cleanup-swap-mode)))))
+      (spatial-window--setup-transient-mode
+       (spatial-window--make-mode-keymap #'spatial-window--select-swap-target)
+       (list spatial-window--source-window)
+       "Swap mode: select target window. C-h for hints. C-g to abort."))))
 
 ;;; Action prompt
 
@@ -614,18 +624,18 @@ Shows keyboard grid overlays in each window during selection.
 With prefix ARG (\\[universal-argument]), prompt for action:
   k - Kill: select one window to delete
   K - Multi-kill: select multiple windows, RET to delete them
-  s - Swap: exchange buffers between windows"
+  s - Swap: exchange buffers between windows
+
+When `spatial-window-expert-mode' is non-nil, overlays are hidden by
+default.  Press C-h to toggle them."
   (interactive "P")
   (let ((windows (spatial-window--frame-windows)))
     (if (<= (length windows) 1)
         (message "Only one window")
       (if arg
           (spatial-window--prompt-action)
-        (when (spatial-window--show-overlays)
-          (set-transient-map
-           (spatial-window--make-selection-keymap)
-           nil
-           #'spatial-window--remove-overlays))))))
+        (spatial-window--setup-transient-mode
+         (spatial-window--make-selection-keymap))))))
 
 (provide 'spatial-window)
 
