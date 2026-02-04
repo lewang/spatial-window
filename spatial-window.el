@@ -79,7 +79,8 @@ Can be a symbol naming a preset layout or a custom list of rows."
 
 (defcustom spatial-window-expert-mode nil
   "When non-nil, hide window overlays by default.
-Use \\[spatial-window--toggle-overlays] (C-h) during selection to show them."
+This can improve responsiveness on configurations where posframe is slow.
+Use C-h during selection to toggle overlay visibility."
   :type 'boolean
   :group 'spatial-window)
 
