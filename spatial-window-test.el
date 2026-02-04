@@ -83,22 +83,20 @@
       (let* ((result (spatial-window--assign-keys))
              (right-keys (cdr (assq win-right result)))
              (top-left-keys (cdr (assq win-top-left result)))
-             (bottom-left-keys (cdr (assq win-bottom-left result))))
-        ;; Right window should have keys from all 3 rows (15 keys)
+             (bottom-left-keys (cdr (assq win-bottom-left result)))
+             (left-keys (append top-left-keys bottom-left-keys))
+             (middle-row '("a" "s" "d" "f" "g" "h" "j" "k" "l" ";")))
+        ;; Right window: all 3 rows, right half = 15 keys
         (should (= (length right-keys) 15))
-        ;; Right window should include middle row keys
-        (should (member "h" right-keys))
-        (should (member "j" right-keys))
-        ;; Left windows should NOT have middle row keys
-        (should-not (member "a" top-left-keys))
-        (should-not (member "s" top-left-keys))
-        (should-not (member "a" bottom-left-keys))
-        ;; Top-left gets top row left half
-        (should (member "q" top-left-keys))
-        (should (member "w" top-left-keys))
-        ;; Bottom-left gets bottom row left half
-        (should (member "z" bottom-left-keys))
-        (should (member "x" bottom-left-keys))))))
+        ;; Right window includes middle row (h, j, k, l, ;)
+        (should (seq-set-equal-p (seq-intersection right-keys middle-row)
+                                 '("h" "j" "k" "l" ";")))
+        ;; Left windows exclude middle row entirely
+        (should (null (seq-intersection left-keys middle-row)))
+        ;; Top-left: top row left half
+        (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t")))
+        ;; Bottom-left: bottom row left half
+        (should (seq-set-equal-p bottom-left-keys '("z" "x" "c" "v" "b")))))))
 
 (ert-deftest spatial-window-test-assign-keys-single-window ()
   "Single window gets all keys."
@@ -122,26 +120,14 @@
       (let* ((result (spatial-window--assign-keys))
              (left-keys (cdr (assq win-left result)))
              (right-keys (cdr (assq win-right result)))
-             (all-keys (append left-keys right-keys)))
-        ;; Each window should have keys from all 3 rows
-        (should (member "q" left-keys))  ; top row
-        (should (member "a" left-keys))  ; middle row
-        (should (member "z" left-keys))  ; bottom row
-        (should (member "p" right-keys))
-        (should (member ";" right-keys))
-        (should (member "/" right-keys))
-        ;; Middle columns should be skipped (r, t, y, u on row 0)
-        (should-not (member "r" all-keys))
-        (should-not (member "t" all-keys))
-        (should-not (member "y" all-keys))
-        (should-not (member "u" all-keys))
-        ;; Outer columns should be present
-        (should (member "q" all-keys))
-        (should (member "w" all-keys))
-        (should (member "e" all-keys))
-        (should (member "i" all-keys))
-        (should (member "o" all-keys))
-        (should (member "p" all-keys))))))
+             (all-keys (append left-keys right-keys))
+             (middle-cols '("r" "t" "y" "u" "f" "g" "h" "j" "v" "b" "n" "m")))
+        ;; Left window: outer left columns, all 3 rows
+        (should (seq-set-equal-p left-keys '("q" "w" "e" "a" "s" "d" "z" "x" "c")))
+        ;; Right window: outer right columns, all 3 rows
+        (should (seq-set-equal-p right-keys '("i" "o" "p" "k" "l" ";" "," "." "/")))
+        ;; Middle columns skipped entirely
+        (should (null (seq-intersection all-keys middle-cols)))))))
 
 (provide 'spatial-window-test)
 
