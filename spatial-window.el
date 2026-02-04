@@ -338,19 +338,24 @@ Returns a string showing which keys are assigned, displayed in keyboard layout."
 Returns the key assignments alist for use in selection."
   (require 'posframe)
   (setq spatial-window--posframe-buffers nil)
-  (let ((assignments (spatial-window--assign-keys)))
+  (let ((assignments (spatial-window--assign-keys))
+        (idx 0))
     (dolist (pair assignments)
       (let* ((window (car pair))
              (keys (cdr pair))
              (grid-str (spatial-window--format-key-grid keys))
-             (buf-name (format " *spatial-window-%s*" (window-parameter window 'window-id)))
-             (edges (window-pixel-edges window))
+             (buf-name (format " *spatial-window-%d*" idx))
+             (edges (window-inside-pixel-edges window))
              (x (+ (nth 0 edges) 10))
              (y (+ (nth 1 edges) 10)))
+        (setq idx (1+ idx))
         (push buf-name spatial-window--posframe-buffers)
         (posframe-show buf-name
                        :string grid-str
-                       :position (cons x y)
+                       :position (point-min)
+                       :parent-frame nil
+                       :x x
+                       :y y
                        :foreground-color (face-foreground 'spatial-window-overlay-face nil t)
                        :background-color (face-background 'spatial-window-overlay-face nil t)
                        :internal-border-width 4)))
