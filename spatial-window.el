@@ -26,10 +26,9 @@
 ;;; Commentary:
 
 ;; Spatial-window provides quick window selection by mapping your keyboard
-;; layout to your window layout.  Instead of numbering windows or showing
-;; overlay characters like ace-window, spatial-window lets you press the key
-;; whose position on your keyboard corresponds to the window's position on
-;; screen.
+;; layout to your window layout.  Each window displays an overlay showing
+;; which keys will select it, based on the spatial correspondence between
+;; keyboard position and window position on screen.
 ;;
 ;; Your eyes look at the target window, your fingers know where that position
 ;; is on the keyboard, and you press that key to jump there.
@@ -65,49 +64,12 @@ This represents the spatial arrangement of keys on your keyboard."
 (defvar spatial-window--posframe-buffers nil
   "List of posframe buffer names for cleanup.")
 
+(defvar spatial-window--current-assignments nil
+  "Current key-to-window assignments for active selection.")
+
 (defun spatial-window--frame-windows ()
   "Return list of windows in current frame, excluding minibuffer."
   (window-list nil 'no-minibuf))
-
-(defun spatial-window--window-center (window)
-  "Return the center position (x . y) of WINDOW in pixels."
-  (let* ((edges (window-pixel-edges window))
-         (left (nth 0 edges))
-         (top (nth 1 edges))
-         (right (nth 2 edges))
-         (bottom (nth 3 edges)))
-    (cons (/ (+ left right) 2)
-          (/ (+ top bottom) 2))))
-
-(defun spatial-window--key-position (key)
-  "Return the position (col . row) of KEY in the keyboard layout.
-Returns nil if KEY is not found."
-  (let ((layout spatial-window-keyboard-layout)
-        (row 0)
-        result)
-    (while (and layout (not result))
-      (let ((col (seq-position (car layout) key #'string=)))
-        (when col
-          (setq result (cons col row))))
-      (setq layout (cdr layout))
-      (setq row (1+ row)))
-    result))
-
-(defun spatial-window--normalize-position (pos max-pos)
-  "Normalize POS to a 0.0-1.0 range given MAX-POS dimensions.
-POS is (x . y), MAX-POS is (max-x . max-y)."
-  (cons (/ (float (car pos)) (car max-pos))
-        (/ (float (cdr pos)) (cdr max-pos))))
-
-(defun spatial-window--keyboard-dimensions ()
-  "Return the dimensions (cols . rows) of the keyboard layout."
-  (let ((rows (length spatial-window-keyboard-layout))
-        (cols (apply #'max (mapcar #'length spatial-window-keyboard-layout))))
-    (cons cols rows)))
-
-(defun spatial-window--frame-dimensions ()
-  "Return the dimensions (width . height) of the current frame in pixels."
-  (cons (frame-pixel-width) (frame-pixel-height)))
 
 (defun spatial-window--window-grid (&optional frame)
   "Return a 2D grid of windows for FRAME based on pixel positions.
@@ -178,10 +140,9 @@ Spanning windows appear in all cells they occupy."
 (defun spatial-window--assign-keys (&optional frame)
   "Assign keyboard keys to windows based on their layout.
 Returns alist of (window . (list of keys)).
-For 2-way vertical splits, the middle keyboard row is skipped."
+When a column has exactly 2 windows and the keyboard has 3 rows, the
+middle row is skipped for that column to improve the spatial mapping."
   (let* ((info-grid (spatial-window--window-info frame))
-         (grid-rows (length info-grid))
-         (grid-cols (length (car info-grid)))
          (kbd-layout spatial-window-keyboard-layout)
          (kbd-rows (length kbd-layout))
          (kbd-cols (length (car kbd-layout)))
@@ -228,22 +189,6 @@ For 2-way vertical splits, the middle keyboard row is skipped."
                                         (plist-get (nth col row) :window))
                                       grid))))))
 
-(defun spatial-window--count-distinct-per-row (grid)
-  "Count distinct windows in each row of GRID."
-  (mapcar (lambda (row)
-            (length (delete-dups
-                     (mapcar (lambda (info) (plist-get info :window))
-                             row))))
-          grid))
-
-(defun spatial-window--select-indices (kbd-count grid-count)
-  "Select which keyboard indices to use for GRID-COUNT divisions.
-For 2-way splits, skip middle index."
-  (let ((indices (number-sequence 0 (1- kbd-count))))
-    (if (and (= grid-count 2) (= kbd-count 3))
-        (list 0 2)  ; Skip middle row/col for 2-way split
-      indices)))
-
 (defun spatial-window--compute-boundaries (percentages key-count)
   "Compute grid cell boundaries based on PERCENTAGES for KEY-COUNT keys.
 Returns list of (start-key . end-key) for each grid cell, non-overlapping.
@@ -279,30 +224,6 @@ Each cell is guaranteed at least 1 key."
              do (setq result idx))
     result))
 
-(defun spatial-window--find-window-for-key (key)
-  "Find the window that best matches KEY's position on the keyboard."
-  (let* ((key-pos (spatial-window--key-position key))
-         (kbd-dims (spatial-window--keyboard-dimensions))
-         (frame-dims (spatial-window--frame-dimensions))
-         (windows (spatial-window--frame-windows)))
-    (when (and key-pos (> (length windows) 1))
-      (let* ((norm-key-pos (spatial-window--normalize-position
-                           (cons (+ (car key-pos) 0.5) (+ (cdr key-pos) 0.5))
-                           kbd-dims))
-             (target-x (* (car norm-key-pos) (car frame-dims)))
-             (target-y (* (cdr norm-key-pos) (cdr frame-dims)))
-             (best-window nil)
-             (best-distance most-positive-fixnum))
-        (dolist (win windows)
-          (let* ((center (spatial-window--window-center win))
-                 (dx (- (car center) target-x))
-                 (dy (- (cdr center) target-y))
-                 (distance (+ (* dx dx) (* dy dy))))
-            (when (< distance best-distance)
-              (setq best-distance distance)
-              (setq best-window win))))
-        best-window))))
-
 (defun spatial-window--format-key-grid (keys)
   "Format KEYS as a keyboard grid string.
 Returns a string showing which keys are assigned, displayed in keyboard layout."
@@ -320,13 +241,15 @@ Returns a string showing which keys are assigned, displayed in keyboard layout."
 
 (defun spatial-window--show-overlays ()
   "Display key hints as posframes in all windows.
-Returns the key assignments alist for use in selection."
+Stores assignments in `spatial-window--current-assignments' for selection."
   (require 'posframe)
   ;; Clean up any existing posframes first
   (spatial-window--remove-overlays)
   (setq spatial-window--posframe-buffers nil)
   (let ((assignments (spatial-window--assign-keys))
         (idx 0))
+    ;; Store assignments for use by spatial-window--select-by-key
+    (setq spatial-window--current-assignments assignments)
     (dolist (pair assignments)
       (let* ((window (car pair))
              (keys (cdr pair))
@@ -345,8 +268,7 @@ Returns the key assignments alist for use in selection."
                          :poshandler (lambda (_info) (cons x y))
                          :foreground-color (face-foreground 'spatial-window-overlay-face nil t)
                          :background-color (face-background 'spatial-window-overlay-face nil t)
-                         :internal-border-width 4))))
-    assignments))
+                         :internal-border-width 4))))))
 
 (defun spatial-window--remove-overlays ()
   "Hide and cleanup all posframes."
@@ -355,12 +277,15 @@ Returns the key assignments alist for use in selection."
   (setq spatial-window--posframe-buffers nil))
 
 (defun spatial-window--select-by-key ()
-  "Select window corresponding to the key that invoked this command."
+  "Select window corresponding to the key that invoked this command.
+Looks up the key in `spatial-window--current-assignments' to find the target."
   (interactive)
   (let* ((key (this-command-keys))
-         (target (spatial-window--find-window-for-key key)))
+         (target (cl-find-if (lambda (pair)
+                               (member key (cdr pair)))
+                             spatial-window--current-assignments)))
     (when target
-      (select-window target))))
+      (select-window (car target)))))
 
 (defun spatial-window--abort ()
   "Abort window selection and clean up overlays."

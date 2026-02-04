@@ -10,18 +10,6 @@
 
 ;;; Helper function tests
 
-(ert-deftest spatial-window-test-select-indices-2-way-split ()
-  "For 2 grid divisions with 3 keyboard rows, skip middle."
-  (should (equal (spatial-window--select-indices 3 2) '(0 2))))
-
-(ert-deftest spatial-window-test-select-indices-1-way ()
-  "For 1 grid division, use all keyboard indices."
-  (should (equal (spatial-window--select-indices 3 1) '(0 1 2))))
-
-(ert-deftest spatial-window-test-select-indices-3-way ()
-  "For 3 grid divisions, use all keyboard indices."
-  (should (equal (spatial-window--select-indices 3 3) '(0 1 2))))
-
 (ert-deftest spatial-window-test-compute-boundaries-equal-split ()
   "Equal 50/50 split divides keys evenly."
   (let ((bounds (spatial-window--compute-boundaries '(0.5 0.5) 10)))
@@ -48,13 +36,6 @@
          (grid `(((:window ,win1) (:window ,win2))
                  ((:window ,win3) (:window ,win2)))))
     (should (equal (spatial-window--count-distinct-per-column grid) '(2 1)))))
-
-(ert-deftest spatial-window-test-count-distinct-per-row ()
-  "Count distinct windows in each row."
-  (let* ((win1 'win1) (win2 'win2) (win3 'win3)
-         (grid `(((:window ,win1) (:window ,win2))
-                 ((:window ,win3) (:window ,win2)))))
-    (should (equal (spatial-window--count-distinct-per-row grid) '(2 2)))))
 
 (ert-deftest spatial-window-test-assign-keys-2-left-1-right ()
   "2 windows top-bottom left, 1 spanning right: right gets all 3 rows."
