@@ -334,6 +334,24 @@ Returns non-nil if overlays were shown, nil if there are too many windows."
                            :foreground-color (face-foreground 'spatial-window-overlay-face nil t)
                            :background-color (face-background 'spatial-window-overlay-face nil t)
                            :internal-border-width 4))))
+      ;; Show minibuffer overlay if active
+      (when (minibuffer-window-active-p (minibuffer-window))
+        (let* ((buf-name " *spatial-window-minibuf*")
+               (minibuf-win (minibuffer-window))
+               (edges (window-pixel-edges minibuf-win))
+               (left (nth 0 edges))
+               (top (nth 1 edges)))
+          (push buf-name spatial-window--posframe-buffers)
+          (with-current-buffer (get-buffer-create buf-name)
+            (erase-buffer)
+            (insert "┌────────┐\n")
+            (insert "└────────┘"))
+          (let ((x left) (y top))
+            (posframe-show buf-name
+                           :poshandler (lambda (_info) (cons x y))
+                           :foreground-color (face-foreground 'spatial-window-overlay-face nil t)
+                           :background-color (face-background 'spatial-window-overlay-face nil t)
+                           :internal-border-width 4))))
       t)))
 
 (defun spatial-window--remove-overlays ()
@@ -359,13 +377,21 @@ Looks up the key in `spatial-window--current-assignments' to find the target."
   (spatial-window--remove-overlays)
   (keyboard-quit))
 
+(defun spatial-window--select-minibuffer ()
+  "Select the minibuffer window."
+  (interactive)
+  (select-window (minibuffer-window)))
+
 (defun spatial-window--make-selection-keymap ()
-  "Build transient keymap with all keyboard layout keys."
+  "Build transient keymap with all keyboard layout keys.
+If minibuffer is active, SPC selects it."
   (let ((map (make-sparse-keymap)))
     (dolist (row (spatial-window--get-layout))
       (dolist (key row)
         (define-key map (kbd key) #'spatial-window--select-by-key)))
     (define-key map (kbd "C-g") #'spatial-window--abort)
+    (when (minibuffer-window-active-p (minibuffer-window))
+      (define-key map (kbd "SPC") #'spatial-window--select-minibuffer))
     map))
 
 ;;;###autoload
