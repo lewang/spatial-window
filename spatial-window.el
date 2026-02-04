@@ -419,14 +419,11 @@ Looks up the key in `spatial-window--current-assignments' to find the target."
         spatial-window--source-window nil
         spatial-window--overlays-visible nil))
 
-(defun spatial-window--toggle-overlays ()
-  "Toggle visibility of window overlays during selection."
+(defun spatial-window--show-hints ()
+  "Show window overlays if not already visible.
+Once shown, overlays remain until selection mode exits."
   (interactive)
-  (if spatial-window--overlays-visible
-      (progn
-        (spatial-window--remove-overlays)
-        (setq spatial-window--overlays-visible nil))
-    ;; Show overlays with appropriate highlighting
+  (unless spatial-window--overlays-visible
     (let ((highlighted (cond
                         ((eq spatial-window--pending-action 'swap)
                          (list spatial-window--source-window))
@@ -449,13 +446,14 @@ Looks up the key in `spatial-window--current-assignments' to find the target."
 (defun spatial-window--make-mode-keymap (key-action &optional extra-bindings)
   "Create keymap binding all layout keys to KEY-ACTION.
 EXTRA-BINDINGS is an alist of (key-string . command) for additional bindings.
-C-g and C-h are always bound to abort and toggle-overlays."
+C-g aborts.  In expert mode, C-h shows hint overlays."
   (let ((map (make-sparse-keymap)))
     (dolist (row (spatial-window--get-layout))
       (dolist (key row)
         (define-key map (kbd key) key-action)))
     (define-key map (kbd "C-g") #'spatial-window--abort)
-    (define-key map (kbd "C-h") #'spatial-window--toggle-overlays)
+    (when spatial-window-expert-mode
+      (define-key map (kbd "C-h") #'spatial-window--show-hints))
     (dolist (binding extra-bindings)
       (define-key map (kbd (car binding)) (cdr binding)))
     map))
@@ -473,7 +471,13 @@ KEEP-ACTIVE if non-nil keeps the transient map active until explicitly exited."
       (spatial-window--show-overlays highlighted)
       (setq spatial-window--overlays-visible t))
     (when message (message "%s" message))
-    (set-transient-map keymap keep-active #'spatial-window--cleanup-mode)))
+    (set-transient-map
+     keymap
+     (if keep-active
+         t
+       ;; Stay active after showing hints, exit after other commands
+       (lambda () (eq this-command 'spatial-window--show-hints)))
+     #'spatial-window--cleanup-mode)))
 
 (defun spatial-window--make-selection-keymap ()
   "Build transient keymap with all keyboard layout keys.
