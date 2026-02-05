@@ -63,52 +63,196 @@ Coordinates are normalized to 0.0-1.0 range relative to frame size."
 
 ;;; Key assignment
 
-(defun spatial-window--bidirectional-score (key-x-start key-x-end key-y-start key-y-end
-                                                         win-x-start win-x-end win-y-start win-y-end)
-  "Compute bidirectional overlap score between a key region and window region.
-Score = forward_overlap × backward_overlap, where:
-  forward = fraction of key that overlaps window
-  backward = fraction of window that overlaps key
-This gives small windows priority for keys in their region."
-  (let* ((x-overlap-start (max key-x-start win-x-start))
-         (x-overlap-end (min key-x-end win-x-end))
-         (y-overlap-start (max key-y-start win-y-start))
-         (y-overlap-end (min key-y-end win-y-end))
+(defconst spatial-window--ownership-threshold 0.75
+  "Minimum overlap fraction for a window to claim a key.
+Keys with no window exceeding this threshold are left unmapped.")
+
+(defun spatial-window--cell-overlap (cell-row cell-col kbd-rows kbd-cols
+                                               win-x-start win-x-end win-y-start win-y-end)
+  "Compute overlap area between a grid cell and window region.
+Returns fraction of cell area that overlaps with window (0.0 to 1.0)."
+  (let* ((cell-x-start (/ (float cell-col) kbd-cols))
+         (cell-x-end (/ (float (1+ cell-col)) kbd-cols))
+         (cell-y-start (/ (float cell-row) kbd-rows))
+         (cell-y-end (/ (float (1+ cell-row)) kbd-rows))
+         (x-overlap-start (max cell-x-start win-x-start))
+         (x-overlap-end (min cell-x-end win-x-end))
+         (y-overlap-start (max cell-y-start win-y-start))
+         (y-overlap-end (min cell-y-end win-y-end))
          (x-overlap-size (max 0.0 (- x-overlap-end x-overlap-start)))
          (y-overlap-size (max 0.0 (- y-overlap-end y-overlap-start)))
          (overlap-area (* x-overlap-size y-overlap-size))
-         (key-area (* (- key-x-end key-x-start) (- key-y-end key-y-start)))
-         (win-area (* (- win-x-end win-x-start) (- win-y-end win-y-start))))
-    (if (or (zerop key-area) (zerop win-area))
-        0.0
-      (* (/ overlap-area key-area) (/ overlap-area win-area)))))
+         (cell-width (/ 1.0 kbd-cols))
+         (cell-height (/ 1.0 kbd-rows))
+         (cell-area (* cell-width cell-height)))
+    (/ overlap-area cell-area)))
 
-(defun spatial-window--key-scores (kbd-layout window-bounds)
-  "Compute bidirectional overlap scores between each key and each window.
-Returns hash table: key -> list of (window . score) sorted by score descending."
-  (let ((kbd-rows (length kbd-layout))
-        (kbd-cols (length (car kbd-layout)))
-        (key-scores (make-hash-table :test 'equal)))
-    (cl-loop for kbd-row from 0 below kbd-rows
-             for key-y-start = (/ (float kbd-row) kbd-rows)
-             for key-y-end = (/ (float (1+ kbd-row)) kbd-rows)
-             do (cl-loop for kbd-col from 0 below kbd-cols
-                         for key-x-start = (/ (float kbd-col) kbd-cols)
-                         for key-x-end = (/ (float (1+ kbd-col)) kbd-cols)
-                         for key = (nth kbd-col (nth kbd-row kbd-layout))
-                         do (let ((scores
-                                   (mapcar (lambda (wb)
-                                             (cons (nth 0 wb)
-                                                   (spatial-window--bidirectional-score
-                                                    key-x-start key-x-end key-y-start key-y-end
-                                                    (nth 1 wb) (nth 2 wb) (nth 3 wb) (nth 4 wb))))
-                                           window-bounds)))
-                              (puthash key (sort scores (lambda (a b) (> (cdr a) (cdr b))))
-                                       key-scores))))
-    key-scores))
+(defun spatial-window--compute-all-overlaps (kbd-rows kbd-cols window-bounds)
+  "Compute overlap for every (cell, window) pair.
+Returns 2D vector where each cell contains alist of (window . overlap)."
+  (let ((overlaps (make-vector kbd-rows nil)))
+    (dotimes (row kbd-rows)
+      (aset overlaps row (make-vector kbd-cols nil))
+      (dotimes (col kbd-cols)
+        (let ((cell-overlaps nil))
+          (dolist (wb window-bounds)
+            (let* ((win (nth 0 wb))
+                   (overlap (spatial-window--cell-overlap
+                             row col kbd-rows kbd-cols
+                             (nth 1 wb) (nth 2 wb) (nth 3 wb) (nth 4 wb))))
+              (when (> overlap 0)
+                (push (cons win overlap) cell-overlaps))))
+          (aset (aref overlaps row) col cell-overlaps))))
+    overlaps))
+
+(defun spatial-window--build-ownership-grid (kbd-rows kbd-cols overlaps)
+  "Build grid assigning each cell to window with >75% overlap, or nil.
+Returns 2D vector where each cell contains window or nil (unmapped)."
+  (let ((grid (make-vector kbd-rows nil)))
+    (dotimes (row kbd-rows)
+      (aset grid row (make-vector kbd-cols nil))
+      (dotimes (col kbd-cols)
+        (let ((cell-overlaps (aref (aref overlaps row) col))
+              (best-window nil)
+              (best-overlap 0.0))
+          ;; Find window with highest overlap above threshold
+          (dolist (wo cell-overlaps)
+            (when (and (> (cdr wo) spatial-window--ownership-threshold)
+                       (> (cdr wo) best-overlap))
+              (setq best-window (car wo)
+                    best-overlap (cdr wo))))
+          (aset (aref grid row) col best-window))))
+    grid))
+
+(defun spatial-window--extract-bounding-boxes (grid kbd-rows kbd-cols window-bounds)
+  "Extract bounding box of owned cells for each window.
+Returns hash table: window -> (min-row max-row min-col max-col) or nil."
+  (let ((boxes (make-hash-table :test 'eq)))
+    ;; Initialize with invalid bounds
+    (dolist (wb window-bounds)
+      (puthash (car wb) nil boxes))
+    ;; Scan grid to find actual bounds
+    (dotimes (row kbd-rows)
+      (dotimes (col kbd-cols)
+        (let ((win (aref (aref grid row) col)))
+          (when win
+            (let ((box (gethash win boxes)))
+              (if box
+                  (puthash win
+                           (list (min row (nth 0 box))
+                                 (max row (nth 1 box))
+                                 (min col (nth 2 box))
+                                 (max col (nth 3 box)))
+                           boxes)
+                (puthash win (list row row col col) boxes)))))))
+    boxes))
+
+(defun spatial-window--resolve-box-overlaps (boxes kbd-rows kbd-cols overlaps)
+  "Assign each cell within bounding boxes to exactly one window.
+Where boxes overlap, the window with higher overlap wins.
+Returns 2D vector of final assignments (window or nil)."
+  (let ((final (make-vector kbd-rows nil)))
+    (dotimes (row kbd-rows)
+      (aset final row (make-vector kbd-cols nil)))
+    ;; For each cell, check all boxes that contain it
+    (dotimes (row kbd-rows)
+      (dotimes (col kbd-cols)
+        (let ((best-window nil)
+              (best-overlap 0.0)
+              (cell-overlaps (aref (aref overlaps row) col)))
+          (maphash
+           (lambda (win box)
+             (when (and box
+                        (<= (nth 0 box) row) (<= row (nth 1 box))
+                        (<= (nth 2 box) col) (<= col (nth 3 box)))
+               ;; This cell is within win's bounding box
+               (let ((overlap (or (cdr (assq win cell-overlaps)) 0.0)))
+                 (when (> overlap best-overlap)
+                   (setq best-window win
+                         best-overlap overlap)))))
+           boxes)
+          (aset (aref final row) col best-window))))
+    final))
+
+(defun spatial-window--count-window-keys (win final kbd-rows kbd-cols)
+  "Count how many keys WIN has in FINAL grid."
+  (let ((count 0))
+    (dotimes (row kbd-rows)
+      (dotimes (col kbd-cols)
+        (when (eq (aref (aref final row) col) win)
+          (cl-incf count))))
+    count))
+
+(defun spatial-window--ensure-window-has-key (win window-bounds kbd-rows kbd-cols final boxes)
+  "Ensure WIN has at least one key by stealing if needed.
+Only steals from windows with more than one key to avoid infinite loops.
+Modifies FINAL and BOXES in place. Returns t if successful."
+  (let ((wb (assq win window-bounds)))
+    (when wb
+      (let ((best-row nil)
+            (best-col nil)
+            (best-overlap 0.0))
+        ;; Find cell with highest overlap for this window
+        ;; Prefer unowned cells, then cells from windows with >1 key
+        (dotimes (row kbd-rows)
+          (dotimes (col kbd-cols)
+            (let* ((overlap (spatial-window--cell-overlap
+                             row col kbd-rows kbd-cols
+                             (nth 1 wb) (nth 2 wb) (nth 3 wb) (nth 4 wb)))
+                   (current-owner (aref (aref final row) col))
+                   (owner-key-count (if current-owner
+                                        (spatial-window--count-window-keys
+                                         current-owner final kbd-rows kbd-cols)
+                                      0))
+                   ;; Can steal if unowned or owner has multiple keys
+                   (can-steal (or (null current-owner) (> owner-key-count 1))))
+              (when (and can-steal (> overlap best-overlap))
+                (setq best-row row
+                      best-col col
+                      best-overlap overlap)))))
+        (when best-row
+          (let ((old-owner (aref (aref final best-row) best-col)))
+            ;; Steal the cell
+            (aset (aref final best-row) best-col win)
+            (puthash win (list best-row best-row best-col best-col) boxes)
+            ;; Recalculate old owner's box if needed
+            (when old-owner
+              (let ((old-box (gethash old-owner boxes)))
+                (when old-box
+                  (let ((new-min-row kbd-rows) (new-max-row -1)
+                        (new-min-col kbd-cols) (new-max-col -1))
+                    (cl-loop for r from (nth 0 old-box) to (nth 1 old-box) do
+                             (cl-loop for c from (nth 2 old-box) to (nth 3 old-box) do
+                                      (when (eq (aref (aref final r) c) old-owner)
+                                        (setq new-min-row (min r new-min-row)
+                                              new-max-row (max r new-max-row)
+                                              new-min-col (min c new-min-col)
+                                              new-max-col (max c new-max-col)))))
+                    (if (> new-min-row new-max-row)
+                        (puthash old-owner nil boxes)
+                      (puthash old-owner
+                               (list new-min-row new-max-row new-min-col new-max-col)
+                               boxes)))))))
+          t)))))
+
+(defun spatial-window--final-to-keys (final kbd-rows kbd-cols kbd-layout)
+  "Convert final assignment grid to alist of (window . keys).
+Each window gets all keys within its contiguous rectangular region."
+  (let ((result (make-hash-table :test 'eq)))
+    (dotimes (row kbd-rows)
+      (dotimes (col kbd-cols)
+        (let ((win (aref (aref final row) col)))
+          (when win
+            (push (nth col (nth row kbd-layout)) (gethash win result))))))
+    ;; Convert to alist with reversed key lists
+    (let ((alist nil))
+      (maphash (lambda (win keys)
+                 (push (cons win (nreverse keys)) alist))
+               result)
+      alist)))
 
 (defun spatial-window--assign-keys (&optional frame window-bounds kbd-layout)
-  "Assign keyboard keys to windows based on bidirectional spatial overlap.
+  "Assign keyboard keys to windows using rectangle-based algorithm.
 Returns alist of (window . (list of keys)).
 
 Optional arguments allow dependency injection for testing:
@@ -116,11 +260,12 @@ Optional arguments allow dependency injection for testing:
   KBD-LAYOUT - keyboard layout as list of rows
 
 Algorithm:
-Phase 1: Assign each key to the window with highest bidirectional score.
-Keys with tied scores (within threshold) are skipped to avoid ambiguity.
-
-Phase 2: Ensure every window has at least one key by stealing from
-multi-key windows or assigning unassigned keys based on score."
+1. Compute overlap for every (cell, window) pair
+2. Build ownership grid: cells with >75% overlap get assigned, others unmapped
+3. Extract bounding box for each window from its owned cells
+4. Resolve overlapping boxes: each cell goes to window with highest overlap
+5. Ensure every window has at least one key (steal if needed)
+6. Convert to rectangular key regions"
   (let ((kbd-layout (or kbd-layout (spatial-window--get-layout))))
     ;; Validate keyboard layout: all rows must have same length
     (if (not (apply #'= (mapcar #'length kbd-layout)))
@@ -130,80 +275,74 @@ multi-key windows or assigning unassigned keys based on score."
       (let* ((window-bounds (or window-bounds (spatial-window--window-bounds frame)))
              (kbd-rows (length kbd-layout))
              (kbd-cols (length (car kbd-layout)))
-             (num-windows (length window-bounds))
-             (tie-threshold 0.05)
-             (result (make-hash-table :test 'eq))
-             (key-assignments (make-hash-table :test 'equal))
-             (key-scores (spatial-window--key-scores kbd-layout window-bounds)))
+             (num-windows (length window-bounds)))
         ;; Check if topology allows assignment
-        (when (> num-windows (* kbd-rows kbd-cols))
-          (message "Too many windows: %d windows for %d keys" num-windows (* kbd-rows kbd-cols))
-          (cl-return-from spatial-window--assign-keys nil))
-        ;; Phase 1: Assign each key to window with highest bidirectional score
-        (maphash
-         (lambda (key scores)
-           (when (and scores (cdr scores))  ; At least 2 windows to compare
-             (let* ((best (car scores))
-                    (second (cadr scores))
-                    (best-score (cdr best))
-                    (second-score (cdr second)))
-               ;; Only assign if clear winner (not a tie)
-               (when (and (> best-score 0)
-                          (or (zerop second-score)
-                              (> (/ (- best-score second-score) best-score) tie-threshold)))
-                 (let ((win (car best)))
-                   (push key (gethash win result))
-                   (puthash key win key-assignments)))))
-           ;; Single window case: assign directly
-           (when (and scores (null (cdr scores)) (> (cdar scores) 0))
-             (let ((win (caar scores)))
-               (push key (gethash win result))
-               (puthash key win key-assignments))))
-         key-scores)
-        ;; Phase 2: Ensure every window has at least one key
-        (dolist (wb window-bounds)
-          (let ((win (car wb)))
-            (unless (gethash win result)
-              ;; Find the key with highest score for this window
-              ;; Prefer unassigned keys, then keys from windows with >1 key
-              (let ((best-key nil)
-                    (best-score 0)
-                    (best-stealable-key nil)
-                    (best-stealable-score 0))
-                (maphash
-                 (lambda (key scores)
-                   (let* ((win-score (cdr (assq win scores)))
-                          (prev-owner (gethash key key-assignments))
-                          (prev-owner-keys (when prev-owner (length (gethash prev-owner result)))))
-                     (when (and win-score (> win-score 0))
-                       (cond
-                        ;; Unassigned key - always prefer these
-                        ((not prev-owner)
-                         (when (> win-score best-score)
-                           (setq best-key key
-                                 best-score win-score)))
-                        ;; Stealable from window with >1 key
-                        ((and prev-owner-keys (> prev-owner-keys 1))
-                         (when (> win-score best-stealable-score)
-                           (setq best-stealable-key key
-                                 best-stealable-score win-score)))))))
-                 key-scores)
-                ;; Use unassigned key if found, else steal from multi-key window
-                (let ((chosen-key (or best-key best-stealable-key)))
-                  (when chosen-key
-                    (let ((prev-owner (gethash chosen-key key-assignments)))
-                      (when prev-owner
-                        (puthash prev-owner
-                                 (delete chosen-key (gethash prev-owner result))
-                                 result)))
-                    (push chosen-key (gethash win result))
-                    (puthash chosen-key win key-assignments)))))))
-        ;; Convert hash to alist, reverse key lists to preserve order
-        (let ((alist nil))
-          (maphash (lambda (win keys)
-                     (push (cons win (nreverse keys)) alist))
-                   result)
-          alist)))))
+        (if (> num-windows (* kbd-rows kbd-cols))
+            (progn
+              (message "Too many windows: %d windows for %d keys" num-windows (* kbd-rows kbd-cols))
+              nil)
+          ;; Step 1: Compute all overlaps
+          (let* ((overlaps (spatial-window--compute-all-overlaps kbd-rows kbd-cols window-bounds))
+               ;; Step 2: Build initial ownership grid (>75% threshold)
+               (grid (spatial-window--build-ownership-grid kbd-rows kbd-cols overlaps))
+               ;; Step 3: Extract bounding boxes
+               (boxes (spatial-window--extract-bounding-boxes grid kbd-rows kbd-cols window-bounds))
+               ;; Step 4: Resolve overlapping boxes
+               (final (spatial-window--resolve-box-overlaps boxes kbd-rows kbd-cols overlaps)))
+          ;; Step 5: Ensure every window has at least one key
+          ;; Process windows in order of their best overlap (highest first)
+          ;; This gives priority to windows with stronger claims
+          (let* ((keyless-windows
+                  (cl-remove-if
+                   (lambda (wb)
+                     (let ((win (car wb)))
+                       (catch 'found
+                         (dotimes (row kbd-rows)
+                           (dotimes (col kbd-cols)
+                             (when (eq (aref (aref final row) col) win)
+                               (throw 'found t))))
+                         nil)))
+                   window-bounds))
+                 ;; Sort by max overlap (highest first) so stronger claims win
+                 (sorted-keyless
+                  (sort keyless-windows
+                        (lambda (a b)
+                          (let ((max-a 0.0) (max-b 0.0))
+                            (dotimes (row kbd-rows)
+                              (dotimes (col kbd-cols)
+                                (setq max-a
+                                      (max max-a
+                                           (spatial-window--cell-overlap
+                                            row col kbd-rows kbd-cols
+                                            (nth 1 a) (nth 2 a) (nth 3 a) (nth 4 a))))
+                                (setq max-b
+                                      (max max-b
+                                           (spatial-window--cell-overlap
+                                            row col kbd-rows kbd-cols
+                                            (nth 1 b) (nth 2 b) (nth 3 b) (nth 4 b))))))
+                            (> max-a max-b)))))
+                 (changed t))
+            ;; Iterate until all keyless windows have keys or can't get any
+            (while (and changed sorted-keyless)
+              (setq changed nil)
+              (setq sorted-keyless
+                    (cl-remove-if
+                     (lambda (wb)
+                       (let ((win (car wb)))
+                         ;; Check if already has key
+                         (catch 'found
+                           (dotimes (row kbd-rows)
+                             (dotimes (col kbd-cols)
+                               (when (eq (aref (aref final row) col) win)
+                                 (throw 'found t))))
+                           nil)))
+                     sorted-keyless))
+              (dolist (wb sorted-keyless)
+                (when (spatial-window--ensure-window-has-key
+                       (car wb) window-bounds kbd-rows kbd-cols final boxes)
+                  (setq changed t)))))
+          ;; Step 6: Convert to key lists
+          (spatial-window--final-to-keys final kbd-rows kbd-cols kbd-layout)))))))
 
 ;;; Formatting utilities
 
