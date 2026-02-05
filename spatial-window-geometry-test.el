@@ -202,7 +202,7 @@
          (win-claude 'win-claude)
          ;; Real layout from user's Emacs session
          ;; Left: 63%, Right: 37%
-         ;; Left split: 93% main / 5% diff panel
+         ;; Left split: 93% main / 5% diff panel (unbalanced)
          (window-bounds
           `((,win-main 0.0 0.63 0.0 0.93)
             (,win-diff 0.0 0.63 0.93 0.985)
@@ -211,14 +211,15 @@
          (main-keys (cdr (assq win-main result)))
          (diff-keys (cdr (assq win-diff result)))
          (claude-keys (cdr (assq win-claude result))))
-    ;; All 3 windows must get keys
-    (should (>= (length main-keys) 1))
-    (should (>= (length diff-keys) 1))
-    (should (>= (length claude-keys) 1))
-    ;; Main window (large) should get most keys
-    (should (>= (length main-keys) 10))
-    ;; Claude window spans full height, gets all 3 rows of its columns
-    (should (>= (length claude-keys) 9))))
+    ;; Unbalanced 93%/5% split: top 2 rows → main, bottom row → diff
+    ;; Left side has 6 columns (cols 0-5, x < 0.6)
+    (should (seq-set-equal-p main-keys '("q" "w" "e" "r" "t" "y"
+                                          "a" "s" "d" "f" "g" "h")))
+    (should (seq-set-equal-p diff-keys '("z" "x" "c" "v" "b" "n")))
+    ;; Claude window spans full height, gets all 3 rows of right 4 cols
+    (should (seq-set-equal-p claude-keys '("u" "i" "o" "p"
+                                            "j" "k" "l" ";"
+                                            "m" "," "." "/")))))
 
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
   "Returns nil and displays message when keyboard layout rows have different lengths."

@@ -107,16 +107,26 @@ Returns hash table: key -> list of (window . overlap) sorted by overlap descendi
                                        key-overlaps))))
     key-overlaps))
 
+(defun spatial-window--window-center (wb)
+  "Return center point (x . y) for window bounds WB."
+  (cons (/ (+ (nth 1 wb) (nth 2 wb)) 2.0)
+        (/ (+ (nth 3 wb) (nth 4 wb)) 2.0)))
+
+(defun spatial-window--distance (p1 p2)
+  "Return Euclidean distance between points P1 and P2."
+  (sqrt (+ (expt (- (car p1) (car p2)) 2)
+           (expt (- (cdr p1) (cdr p2)) 2))))
+
 (defun spatial-window--assign-keys (&optional frame window-bounds kbd-layout)
-  "Assign keyboard keys to windows based on spatial overlap.
+  "Assign keyboard keys to windows based on spatial proximity.
 Returns alist of (window . (list of keys)).
 
 Optional arguments allow dependency injection for testing:
   WINDOW-BOUNDS - list of (window x-start x-end y-start y-end)
   KBD-LAYOUT - keyboard layout as list of rows
 
-Algorithm: For each key position, compute overlap with all windows.
-Assign to window with highest overlap if unambiguous. Then ensure
+Algorithm: For each key, find the nearest window (by center distance)
+among windows that overlap with the key. Skip ties. Then ensure
 every window has at least one key (unless topologically impossible)."
   (let ((kbd-layout (or kbd-layout (spatial-window--get-layout))))
     ;; Validate keyboard layout: all rows must have same length
@@ -128,27 +138,82 @@ every window has at least one key (unless topologically impossible)."
              (kbd-rows (length kbd-layout))
              (kbd-cols (length (car kbd-layout)))
              (num-windows (length window-bounds))
-             (tie-threshold 0.10)
+             (tie-threshold 0.05)
              (result (make-hash-table :test 'eq))
              (key-assignments (make-hash-table :test 'equal))
-             (key-overlaps (spatial-window--key-overlaps kbd-layout window-bounds)))
+             (key-overlaps (spatial-window--key-overlaps kbd-layout window-bounds))
+             (window-centers (mapcar (lambda (wb)
+                                       (cons (car wb) (spatial-window--window-center wb)))
+                                     window-bounds)))
         ;; Check if topology allows assignment (not more windows than keys in any dimension)
         (when (> num-windows (* kbd-rows kbd-cols))
           (message "Too many windows: %d windows for %d keys" num-windows (* kbd-rows kbd-cols))
           (cl-return-from spatial-window--assign-keys nil))
-        ;; Phase 1: Assign keys to clear winners (not ties)
-        (maphash
-         (lambda (key overlaps)
-           (let* ((best (car overlaps))
-                  (second (cadr overlaps))
-                  (best-overlap (cdr best))
-                  (second-overlap (if second (cdr second) 0.0)))
-             (when (and (> best-overlap 0)
-                        (or (< second-overlap 0.001)
-                            (< (/ second-overlap best-overlap) (- 1.0 tie-threshold))))
-               (push key (gethash (car best) result))
-               (puthash key (car best) key-assignments))))
-         key-overlaps)
+        ;; Phase 1: For each key, find windows overlapping its column, distribute rows
+        (cl-loop for kbd-col from 0 below kbd-cols
+                 for key-x-center = (/ (+ kbd-col 0.5) (float kbd-cols))
+                 do
+                 ;; Find windows that overlap this column (in x)
+                 (let* ((col-windows
+                         (cl-loop for wb in window-bounds
+                                  for x-start = (nth 1 wb)
+                                  for x-end = (nth 2 wb)
+                                  when (and (< key-x-center x-end)
+                                            (>= key-x-center x-start))
+                                  collect wb))
+                        ;; Sort by y-start (top to bottom)
+                        (sorted-windows (sort (copy-sequence col-windows)
+                                              (lambda (a b) (< (nth 3 a) (nth 3 b)))))
+                        (num-col-windows (length sorted-windows))
+                        ;; Check if this is a balanced 2-window split (40-60% each)
+                        (balanced-split-p
+                         (and (= num-col-windows 2)
+                              (let* ((h1 (- (nth 4 (nth 0 sorted-windows))
+                                            (nth 3 (nth 0 sorted-windows))))
+                                     (h2 (- (nth 4 (nth 1 sorted-windows))
+                                            (nth 3 (nth 1 sorted-windows))))
+                                     (total (+ h1 h2))
+                                     (ratio1 (/ h1 total))
+                                     (ratio2 (/ h2 total)))
+                                (and (>= ratio1 0.4) (<= ratio1 0.6)
+                                     (>= ratio2 0.4) (<= ratio2 0.6))))))
+                   (when (> num-col-windows 0)
+                     (if balanced-split-p
+                         ;; Balanced split: top gets row 0, bottom gets row 2, skip middle
+                         (cl-loop for kbd-row from 0 below kbd-rows
+                                  for key = (nth kbd-col (nth kbd-row kbd-layout))
+                                  unless (= kbd-row (/ kbd-rows 2)) ; skip middle row
+                                  do
+                                  (let* ((assigned-win
+                                          (if (< kbd-row (/ kbd-rows 2))
+                                              (nth 0 (nth 0 sorted-windows)) ; top window
+                                            (nth 0 (nth 1 sorted-windows))))) ; bottom window
+                                    (push key (gethash assigned-win result))
+                                    (puthash key assigned-win key-assignments)))
+                       ;; Unbalanced: distribute rows, each window gets at least 1
+                       (let* ((row-assignments (make-vector kbd-rows nil))
+                              (rows-per-window (/ kbd-rows num-col-windows))
+                              (extra-rows (mod kbd-rows num-col-windows))
+                              (current-row 0))
+                         ;; Assign rows to windows top-to-bottom
+                         (cl-loop for wb in sorted-windows
+                                  for win = (nth 0 wb)
+                                  for rows-for-this = (+ rows-per-window
+                                                         (if (> extra-rows 0) 1 0))
+                                  do
+                                  (when (> extra-rows 0) (cl-decf extra-rows))
+                                  (cl-loop for r from current-row below (+ current-row rows-for-this)
+                                           when (< r kbd-rows)
+                                           do (aset row-assignments r win))
+                                  (cl-incf current-row rows-for-this))
+                         ;; Assign keys based on row assignments
+                         (cl-loop for kbd-row from 0 below kbd-rows
+                                  for key = (nth kbd-col (nth kbd-row kbd-layout))
+                                  for assigned-win = (aref row-assignments kbd-row)
+                                  when assigned-win
+                                  do
+                                  (push key (gethash assigned-win result))
+                                  (puthash key assigned-win key-assignments)))))))
         ;; Phase 2: Ensure every window has at least one key
         ;; Only steal from windows that have >1 key, or from unassigned keys
         (dolist (wb window-bounds)

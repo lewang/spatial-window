@@ -37,21 +37,21 @@ For example, key "q" (row 0, col 0) covers x=[0.0, 0.1], y=[0.0, 0.33].
 
 ## Algorithm
 
-### Phase 1: Overlap-Based Assignment
+### Phase 1: Column-Based Row Distribution
 
-For each key, compute its overlap with every window:
+For each keyboard column, find windows that overlap with it horizontally, then distribute keyboard rows among those
+windows.
 
-```
-overlap = (x-overlap fraction) × (y-overlap fraction)
-```
+**Balanced splits (40-60% each):** When a column has exactly 2 windows with roughly equal height, the middle keyboard
+row is skipped to avoid ambiguity:
+- Top window → top row
+- Bottom window → bottom row
+- Middle row → unassigned (can be claimed by spanning windows in other columns)
 
-Where x-overlap fraction is how much of the key's x-range falls within the window's x-range.
-
-Assign the key to the window with highest overlap, **unless** it's a tie:
-
-- A "tie" is when the top two overlaps are within 10% of each other
-- Ties occur with balanced 50/50 splits (e.g., two equal-height windows)
-- Skipping ties prevents the middle keyboard row from being assigned to either window in a 50/50 vertical split
+**Unbalanced splits:** When windows have unequal sizes, rows are distributed top-to-bottom with each window
+guaranteed at least one row:
+- 2 windows, 93%/5% split → top gets 2 rows, bottom gets 1 row
+- 3 windows → each gets 1 row
 
 ### Phase 2: Ensure Coverage
 
