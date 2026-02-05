@@ -416,6 +416,52 @@ With 75% threshold, middle row is unmapped (ambiguous); all regions rectangular.
     ;; No duplicate keys
     (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
 
+;;; ┌────┬─────────────────────────────┐
+;;; │code│                             │
+;;; │nar │      code-wide (89%)        │
+;;; │11% │                             │
+;;; ├────┼─────────────────────────────┤
+;;; │    │     posframe-top (68%)      │
+;;; │mag ├─────────────────────────────┤
+;;; │32% │     posframe-bot (68%)      │
+;;; └────┴─────────────────────────────┘
+;;; Real 5-window layout from development session
+
+(ert-deftest spatial-window-test-real-dev-session-layout ()
+  "Real 5-window layout: narrow code window, wide code, magit, two posframes.
+Tests misaligned splits with actual floating-point bounds from Emacs."
+  (let* ((win-posframe-top 'win-posframe-top)
+         (win-posframe-bot 'win-posframe-bot)
+         (win-code-narrow 'win-code-narrow)
+         (win-code-wide 'win-code-wide)
+         (win-magit 'win-magit)
+         ;; Actual bounds captured from Emacs session
+         (window-bounds
+          `((,win-posframe-top 0.3192982456140351 0.9988304093567252 0.48653846153846153 0.7423076923076923)
+            (,win-posframe-bot 0.3192982456140351 0.9988304093567252 0.7423076923076923 0.9846153846153847)
+            (,win-code-narrow 0.0011695906432748538 0.11052631578947368 0.0019230769230769232 0.48653846153846153)
+            (,win-code-wide 0.11052631578947368 0.9988304093567252 0.0019230769230769232 0.48653846153846153)
+            (,win-magit 0.0011695906432748538 0.3192982456140351 0.48653846153846153 0.9846153846153847)))
+         (result (spatial-window--assign-keys nil window-bounds))
+         (narrow-keys (cdr (assq win-code-narrow result)))
+         (wide-keys (cdr (assq win-code-wide result)))
+         (magit-keys (cdr (assq win-magit result)))
+         (posframe-top-keys (cdr (assq win-posframe-top result)))
+         (posframe-bot-keys (cdr (assq win-posframe-bot result)))
+         (all-keys (apply #'append (mapcar #'cdr result))))
+    ;; Narrow code window (11% width) steals "q"
+    (should (seq-set-equal-p narrow-keys '("q")))
+    ;; Wide code window (89% width, top) gets most of top row
+    (should (seq-set-equal-p wide-keys '("w" "e" "r" "t" "y" "u" "i" "o" "p")))
+    ;; Magit (32% width, full bottom-left height) gets bottom-left
+    (should (seq-set-equal-p magit-keys '("z" "x" "c")))
+    ;; Posframe windows each steal one key from ambiguous zone
+    (should (seq-set-equal-p posframe-top-keys '("k")))
+    (should (seq-set-equal-p posframe-bot-keys '(",")))
+    ;; All 5 windows have keys, 15 total, no duplicates
+    (should (= (length all-keys) 15))
+    (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
+
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
   "Returns nil and displays message when keyboard layout rows have different lengths."
   (let ((invalid-layout '(("q" "w" "e")
