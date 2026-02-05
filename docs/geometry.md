@@ -1,140 +1,142 @@
-# Geometry Algorithm
+# Key Assignment Algorithm Documentation
 
-This document describes how spatial-window maps keyboard keys to windows based on their spatial positions.
+## Overview
 
-## Core Concept
+The algorithm assigns keyboard keys to Emacs windows based on spatial overlap. Each window gets a **rectangular** block
+of keys that corresponds to its position on screen. The keyboard is treated as a 3×10 grid (3 rows, 10 columns) mapped
+to the frame's coordinate space.
 
-The algorithm treats both the keyboard and the screen as normalized 2D grids (0.0 to 1.0 in both dimensions), then
-computes **bidirectional overlap** between each key's region and each window's region.
+## Constants
 
-## Data Model
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `spatial-window--ownership-threshold` | 0.75 | Minimum overlap for "strong ownership" |
+| `spatial-window--relative-threshold` | 0.20 | Minimum margin to win contested cells |
 
-### Window Bounds
+## Algorithm Steps
 
-Each window is represented as normalized coordinates:
+### Step 1: Compute All Overlaps
+**Function:** `spatial-window--compute-all-overlaps`
 
-```
-(window x-start x-end y-start y-end)
-```
-
-For example, a window occupying the left half of the screen:
-
-```elisp
-(win-left 0.0 0.5 0.0 1.0)
-```
-
-### Key Regions
-
-Each key on a 3-row × 10-column keyboard maps to a screen region:
+For each (cell, window) pair, compute what fraction of the cell's area overlaps with the window. Returns a 3×10 grid
+where each cell contains an alist of `(window . overlap-fraction)`.
 
 ```
-Key at (row r, col c):
-  x-range: [c/10, (c+1)/10]
-  y-range: [r/3, (r+1)/3]
+Cell (0,0) = "q" at coordinates (0.0-0.1, 0.0-0.33)
+Window at (0.0-0.5, 0.0-0.5) → overlap = 100%
+Window at (0.5-1.0, 0.0-1.0) → overlap = 0%
 ```
 
-For example, key "q" (row 0, col 0) covers x=[0.0, 0.1], y=[0.0, 0.33].
+### Step 2: Build Ownership Grid (Two-Phase)
+**Function:** `spatial-window--build-ownership-grid`
 
-## Algorithm
+**Phase 1 - Strong Ownership (>75%):**
+Cells with a window having >75% overlap are assigned to that window. These windows are marked as having "strong
+ownership" and tracked in a hash table.
 
-### Bidirectional Overlap Score
-
-For each key-window pair, compute:
-
-```
-forward_overlap  = overlap_area / key_area    (fraction of key inside window)
-backward_overlap = overlap_area / window_area (fraction of window covered by key)
-score = forward_overlap × backward_overlap
-```
-
-This **bidirectional score** gives small windows priority for keys in their region. A key that covers a large fraction
-of a small window scores higher than the same key with a large window, even if the large window has more absolute
-overlap.
-
-### Phase 1: Assign by Highest Score
-
-For each key, assign it to the window with the highest bidirectional score. Skip keys where the top two windows have
-nearly equal scores (tie threshold: 5%) to avoid ambiguity.
-
-### Phase 2: Ensure Coverage
-
-Every window must have at least one key (unless topologically impossible). For any window without keys after Phase 1:
-
-1. Find the key with highest score for that window
-2. If unassigned, assign it
-3. If assigned to another window with >1 keys, steal it
-4. Never steal from a window that would be left with zero keys
-
-## Examples
-
-### 50/50 Vertical Split
+**Phase 2 - Relative Threshold (>20% margin):**
+For cells still unassigned, windows **without** strong ownership compete. A window wins if its overlap exceeds all
+competitors by >20%. This prevents windows with solid rows from encroaching on neighbors.
 
 ```
-+-------+-------+
-|       |       |
-| win-L | win-R |
-|       |       |
-+-------+-------+
+Example: code-wide owns row 0 at 85% → marked as "has strong ownership"
+         posframe-top has 54% overlap with row 1 cell
+         code-wide has 46% overlap with same cell
+
+         Phase 2: code-wide excluded (has strong ownership)
+         posframe-top wins (54% > 0% + 20%)
 ```
 
-- Keys in left 5 columns → win-L (higher bidirectional score)
-- Keys in right 5 columns → win-R
-- Each window gets 15 keys (5 cols × 3 rows)
+### Step 3: Extract Bounding Boxes
+**Function:** `spatial-window--extract-bounding-boxes`
 
-### 50/50 Horizontal Split
-
-```
-+---------------+
-|    win-top    |
-+---------------+
-|   win-bottom  |
-+---------------+
-```
-
-- Top row keys → win-top (100% forward, ~33% backward for top; 0% for bottom)
-- Bottom row keys → win-bottom
-- Middle row keys → **skipped** (tied scores)
-- Each window gets 10 keys (10 cols × 1 row)
-
-### Extreme Narrow Column (4% width)
+For each window, find the min/max row and column of its owned cells. This defines a rectangular region. Windows with no
+owned cells get `nil`.
 
 ```
-+--+------------------------+
-|  |                        |
-|4%|         96%            |
-|  |                        |
-+--+------------------------+
+Window owns cells: (0,0), (0,1), (0,2), (1,0), (1,1), (1,2)
+Bounding box: rows 0-1, cols 0-2 → 6 keys
 ```
 
-Despite the right window having higher absolute overlap with column 0 keys, bidirectional scoring gives the narrow
-left window priority because those keys cover a large fraction of its area:
+### Step 4: Resolve Box Overlaps
+**Function:** `spatial-window--resolve-box-overlaps`
 
-- Key "q" with narrow window: 41% forward × 43% backward = **17.7%**
-- Key "q" with large window: 58% forward × 2% backward = **1.2%**
+Bounding boxes can overlap when windows have misaligned splits. For each cell within any bounding box, assign it to the
+window with highest overlap for that cell.
 
-The narrow window wins decisively.
+```
+Cell (1,5) is in both window A's box and window B's box
+Window A overlap: 40%
+Window B overlap: 60%
+→ Cell goes to window B
+```
 
-## Why Bidirectional Scoring Works
+### Step 5: Ensure Every Window Has Keys
+**Function:** `spatial-window--ensure-window-has-key`
 
-| Scenario | Forward | Backward | Score | Result |
-|----------|---------|----------|-------|--------|
-| Key fully in small window | High | High | **High** | Small window wins |
-| Key partly in large window | High | Low | Low | Large window loses |
-| 50/50 split boundary | Equal | Equal | Tied | Skip key |
-| Key fully in spanning window | High | Medium | Medium | Depends on competition |
+Windows that ended up with no keys must steal from neighbors:
 
-The bidirectional approach naturally handles:
-- Tiny windows getting their "home" keys
-- Large windows not stealing from small neighbors
-- Ties at exact boundaries
-- No special cases needed
+1. Find windows with no keys, sort by their max overlap (strongest claims first)
+2. For each keyless window, find the cell with highest overlap that is either:
+   - Unowned, OR
+   - Owned by a window with >1 key (can spare one)
+3. Steal that cell
+4. Repeat until all windows have at least one key
 
-## Scalability
+This prevents infinite loops where windows steal back and forth.
 
-The algorithm works for:
+### Step 6: Convert to Key Lists
+**Function:** `spatial-window--final-to-keys`
 
-- Different keyboard layouts (any row/column count)
-- Any window configuration
-- Extreme aspect ratios and splits
+Convert the final 3×10 assignment grid to an alist of `(window . (list of keys))`.
 
-The math naturally handles all cases through bidirectional overlap computation.
+## Helper Functions
+
+| Function | Purpose |
+|----------|---------|
+| `spatial-window--cell-overlap` | Compute overlap fraction between one cell and one window |
+| `spatial-window--count-window-keys` | Count how many keys a window has in the final grid |
+| `spatial-window--window-bounds` | Get normalized (0.0-1.0) bounds for all windows in frame |
+
+## Key Behaviors
+
+### Ambiguous Zones
+Cells where no window has >75% overlap AND no window beats competitors by >20% remain **unmapped**. This is intentional
+for areas where windows straddle row boundaries.
+
+### Rectangular Guarantee
+The bounding box approach ensures each window's keys form a rectangle. No "L-shaped" or irregular key regions.
+
+### Priority System
+1. Windows with >75% overlap claim cells first
+2. Windows already satisfied don't compete for more
+3. Keyless windows with strongest claims steal first
+
+## Example: 5-Window Layout
+
+```
+┌────┬─────────────────────────────┐
+│code│                             │
+│nar │      code-wide (89%)        │
+│11% │                             │
+├────┼─────────────────────────────┤
+│    │     posframe-top (68%)      │
+│mag ├─────────────────────────────┤
+│32% │     posframe-bot (68%)      │
+└────┴─────────────────────────────┘
+```
+
+Result:
+- `code-narrow`: "q" (stolen, 11% width insufficient for 75%)
+- `code-wide`: "w e r t y u i o p" (row 0, strong ownership)
+- `magit`: "z x c" (bottom-left)
+- `posframe-top`: "f g h j k l ;" (row 1 right, code-wide backed off)
+- `posframe-bot`: "v b n m , . /" (row 2 right)
+
+## Verification
+
+```bash
+emacs --batch -L . -l spatial-window-geometry-test.el -f ert-run-tests-batch-and-exit
+```
+
+All 17 tests should pass.
