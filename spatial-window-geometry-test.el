@@ -195,6 +195,31 @@
     (should (>= (length (cdr (assq win-sw4 result))) 1))
     (should (>= (length (cdr (assq win-backtrace result))) 1))))
 
+(ert-deftest spatial-window-test-ide-layout-with-thin-panel ()
+  "IDE layout: main editor + thin diff panel on left, claude on right."
+  (let* ((win-main 'win-main)
+         (win-diff 'win-diff)
+         (win-claude 'win-claude)
+         ;; Real layout from user's Emacs session
+         ;; Left: 63%, Right: 37%
+         ;; Left split: 93% main / 5% diff panel
+         (window-bounds
+          `((,win-main 0.0 0.63 0.0 0.93)
+            (,win-diff 0.0 0.63 0.93 0.985)
+            (,win-claude 0.63 1.0 0.0 0.985)))
+         (result (spatial-window--assign-keys nil window-bounds))
+         (main-keys (cdr (assq win-main result)))
+         (diff-keys (cdr (assq win-diff result)))
+         (claude-keys (cdr (assq win-claude result))))
+    ;; All 3 windows must get keys
+    (should (>= (length main-keys) 1))
+    (should (>= (length diff-keys) 1))
+    (should (>= (length claude-keys) 1))
+    ;; Main window (large) should get most keys
+    (should (>= (length main-keys) 10))
+    ;; Claude window spans full height, gets all 3 rows of its columns
+    (should (>= (length claude-keys) 9))))
+
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
   "Returns nil and displays message when keyboard layout rows have different lengths."
   (let ((invalid-layout '(("q" "w" "e")
