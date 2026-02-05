@@ -124,15 +124,14 @@ Phase 2: Ensure every window has at least one key by stealing from
 multi-key windows or assigning unassigned keys based on overlap."
   (let ((kbd-layout (or kbd-layout (spatial-window--get-layout))))
     ;; Validate keyboard layout: all rows must have same length
-    (unless (apply #'= (mapcar #'length kbd-layout))
-      (message "Invalid keyboard layout: rows have different lengths")
-      nil)
-    (when (apply #'= (mapcar #'length kbd-layout))
+    (if (not (apply #'= (mapcar #'length kbd-layout)))
+        (progn
+          (message "Invalid keyboard layout: rows have different lengths")
+          nil)
       (let* ((window-bounds (or window-bounds (spatial-window--window-bounds frame)))
              (kbd-rows (length kbd-layout))
              (kbd-cols (length (car kbd-layout)))
              (num-windows (length window-bounds))
-             (tie-threshold 0.05)
              (result (make-hash-table :test 'eq))
              (key-assignments (make-hash-table :test 'equal))
              (key-overlaps (spatial-window--key-overlaps kbd-layout window-bounds)))
@@ -157,8 +156,10 @@ multi-key windows or assigning unassigned keys based on overlap."
                                               (lambda (a b) (< (nth 3 a) (nth 3 b)))))
                         (num-col-windows (length sorted-windows))
                         ;; Check if this is a balanced 2-window split (40-60% each)
+                        ;; Only applies to odd row counts where there's a true middle row
                         (balanced-split-p
                          (and (= num-col-windows 2)
+                              (cl-oddp kbd-rows)
                               (let* ((h1 (- (nth 4 (nth 0 sorted-windows))
                                             (nth 3 (nth 0 sorted-windows))))
                                      (h2 (- (nth 4 (nth 1 sorted-windows))

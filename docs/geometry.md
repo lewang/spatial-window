@@ -42,11 +42,13 @@ For example, key "q" (row 0, col 0) covers x=[0.0, 0.1], y=[0.0, 0.33].
 For each keyboard column, find windows that overlap with it horizontally, then distribute keyboard rows among those
 windows.
 
-**Balanced splits (40-60% each):** When a column has exactly 2 windows with roughly equal height, the middle keyboard
-row is skipped to avoid ambiguity:
-- Top window → top row
-- Bottom window → bottom row
+**Balanced splits (40-60% each, odd row counts only):** When a column has exactly 2 windows with roughly equal
+height and the keyboard has an odd number of rows, the middle keyboard row is skipped to avoid ambiguity:
+- Top window → rows above middle
+- Bottom window → rows below middle
 - Middle row → unassigned (can be claimed by spanning windows in other columns)
+
+For even row counts (e.g., 4 rows), no row sits exactly at the boundary, so normal distribution applies.
 
 **Unbalanced splits:** When windows have unequal sizes, rows are distributed top-to-bottom with each window
 guaranteed at least one row:
@@ -139,10 +141,10 @@ Phase 1:
 
 ## Scalability
 
-The algorithm works unchanged for:
+The algorithm works for:
 
-- Different keyboard layouts (4+ rows, different column counts)
+- Different keyboard layouts (any row/column count)
 - Any window configuration
-- No hardcoded assumptions about "middle row" or specific split ratios
+- Balanced-split middle-row skipping activates only for odd row counts (where a true middle row exists)
 
 The math naturally handles all cases through overlap computation.
