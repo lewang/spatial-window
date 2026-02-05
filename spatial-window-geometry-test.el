@@ -42,10 +42,11 @@
 (ert-deftest spatial-window-test-assign-keys-single-window ()
   "Single window gets all keys."
   (let* ((win 'win)
+         (all-keys (apply #'append (spatial-window--get-layout)))
          (window-bounds `((,win 0.0 1.0 0.0 1.0)))
          (result (spatial-window--assign-keys nil window-bounds))
          (keys (cdr (assq win result))))
-    (should (= (length keys) 30))))
+    (should (seq-set-equal-p keys all-keys))))
 
 ;;; ┌─────────┬─────────┐
 ;;; │         │         │
@@ -101,7 +102,9 @@
          (left-keys (append top-left-keys bottom-left-keys))
          (middle-row '("a" "s" "d" "f" "g" "h" "j" "k" "l" ";")))
     ;; Right window: all 3 rows, right half = 15 keys
-    (should (= (length right-keys) 15))
+    (should (seq-set-equal-p right-keys '("y" "u" "i" "o" "p"
+                                          "h" "j" "k" "l" ";"
+                                          "n" "m" "," "." "/")))
     ;; Right window includes middle row (h, j, k, l, ;)
     (should (seq-set-equal-p (seq-intersection right-keys middle-row)
                              '("h" "j" "k" "l" ";")))
@@ -173,10 +176,13 @@
          (main-keys (cdr (assq win-main result)))
          (top-keys (cdr (assq win-sidebar-top result)))
          (bot-keys (cdr (assq win-sidebar-bot result))))
-    ;; Every window MUST get at least 1 key
-    (should (>= (length main-keys) 1))
-    (should (>= (length top-keys) 1))
-    (should (>= (length bot-keys) 1))))
+    ;; Sidebar windows steal from rightmost column based on overlap
+    (should (seq-set-equal-p top-keys '("p")))
+    (should (seq-set-equal-p bot-keys '("/")))
+    ;; Main gets remaining 28 keys
+    (should (seq-set-equal-p main-keys '("q" "w" "e" "r" "t" "y" "u" "i" "o"
+                                          "a" "s" "d" "f" "g" "h" "j" "k" "l" ";"
+                                          "z" "x" "c" "v" "b" "n" "m" "," ".")))))
 
 ;;; ┌───────────────────┐
 ;;; │      win1 33%     │
@@ -194,9 +200,12 @@
                           (,win2 0.0 1.0 0.33 0.67)
                           (,win3 0.0 1.0 0.67 1.0)))
          (result (spatial-window--assign-keys nil window-bounds)))
-    (should (= (length (cdr (assq win1 result))) 10))
-    (should (= (length (cdr (assq win2 result))) 10))
-    (should (= (length (cdr (assq win3 result))) 10))))
+    (should (seq-set-equal-p (cdr (assq win1 result))
+                             '("q" "w" "e" "r" "t" "y" "u" "i" "o" "p")))
+    (should (seq-set-equal-p (cdr (assq win2 result))
+                             '("a" "s" "d" "f" "g" "h" "j" "k" "l" ";")))
+    (should (seq-set-equal-p (cdr (assq win3 result))
+                             '("z" "x" "c" "v" "b" "n" "m" "," "." "/")))))
 
 ;;; ┌──┬──┬──┬──┬──┬──┬──┬──┬──┬──┐
 ;;; │  │  │  │  │  │  │  │  │  │  │
@@ -207,13 +216,24 @@
 
 (ert-deftest spatial-window-test-max-10-cols ()
   "10 left-right windows = 10 keyboard columns, each gets 3 keys (1 col × 3 rows)."
-  (let* ((wins (cl-loop for i below 10 collect (intern (format "win%d" i))))
-         (window-bounds (cl-loop for i below 10
-                                  for w in wins
-                                  collect (list w (/ (float i) 10) (/ (float (1+ i)) 10) 0.0 1.0)))
+  (let* ((win0 'win0) (win1 'win1) (win2 'win2) (win3 'win3) (win4 'win4)
+         (win5 'win5) (win6 'win6) (win7 'win7) (win8 'win8) (win9 'win9)
+         (window-bounds
+          `((,win0 0.0 0.1 0.0 1.0) (,win1 0.1 0.2 0.0 1.0) (,win2 0.2 0.3 0.0 1.0)
+            (,win3 0.3 0.4 0.0 1.0) (,win4 0.4 0.5 0.0 1.0) (,win5 0.5 0.6 0.0 1.0)
+            (,win6 0.6 0.7 0.0 1.0) (,win7 0.7 0.8 0.0 1.0) (,win8 0.8 0.9 0.0 1.0)
+            (,win9 0.9 1.0 0.0 1.0)))
          (result (spatial-window--assign-keys nil window-bounds)))
-    (dolist (w wins)
-      (should (= (length (cdr (assq w result))) 3)))))
+    (should (seq-set-equal-p (cdr (assq win0 result)) '("q" "a" "z")))
+    (should (seq-set-equal-p (cdr (assq win1 result)) '("w" "s" "x")))
+    (should (seq-set-equal-p (cdr (assq win2 result)) '("e" "d" "c")))
+    (should (seq-set-equal-p (cdr (assq win3 result)) '("r" "f" "v")))
+    (should (seq-set-equal-p (cdr (assq win4 result)) '("t" "g" "b")))
+    (should (seq-set-equal-p (cdr (assq win5 result)) '("y" "h" "n")))
+    (should (seq-set-equal-p (cdr (assq win6 result)) '("u" "j" "m")))
+    (should (seq-set-equal-p (cdr (assq win7 result)) '("i" "k" ",")))
+    (should (seq-set-equal-p (cdr (assq win8 result)) '("o" "l" ".")))
+    (should (seq-set-equal-p (cdr (assq win9 result)) '("p" ";" "/")))))
 
 ;;; ┌───────────────────┬─────────┐
 ;;; │      magit        │         │
@@ -245,14 +265,17 @@
             (,win-sw4 0.255 0.511 0.483 1.0)
             (,win-backtrace 0.0 0.066 0.725 1.0)))
          (result (spatial-window--assign-keys nil window-bounds)))
-    ;; ALL 7 windows MUST have at least 1 key
-    (should (>= (length (cdr (assq win-magit result))) 1))
-    (should (>= (length (cdr (assq win-claude result))) 1))
-    (should (>= (length (cdr (assq win-sw1 result))) 1))
-    (should (>= (length (cdr (assq win-sw2 result))) 1))
-    (should (>= (length (cdr (assq win-sw3 result))) 1))
-    (should (>= (length (cdr (assq win-sw4 result))) 1))
-    (should (>= (length (cdr (assq win-backtrace result))) 1))))
+    ;; Top row goes to magit (top-left spanning)
+    (should (seq-set-equal-p (cdr (assq win-magit result)) '("q" "w" "e" "r" "t")))
+    ;; Right half gets claude (full height right side)
+    (should (seq-set-equal-p (cdr (assq win-claude result))
+                             '("y" "u" "i" "o" "p" "h" "j" "k" "l" ";" "n" "m" "," "." "/")))
+    ;; Bottom-left small windows each get keys from their positions
+    (should (seq-set-equal-p (cdr (assq win-sw1 result)) '("a")))
+    (should (seq-set-equal-p (cdr (assq win-sw2 result)) '("s")))
+    (should (seq-set-equal-p (cdr (assq win-sw3 result)) '("x" "c")))
+    (should (seq-set-equal-p (cdr (assq win-sw4 result)) '("v" "b")))
+    (should (seq-set-equal-p (cdr (assq win-backtrace result)) '("z")))))
 
 ;;; ┌─────────────┬───────┐
 ;;; │             │       │
@@ -292,6 +315,44 @@
     (should (seq-set-equal-p claude-keys '("u" "i" "o" "p"
                                             "j" "k" "l" ";"
                                             "m" "," "." "/")))))
+
+;;; ┌──┬────────────────────────────┐
+;;; │  │                            │
+;;; │4%│                            │
+;;; │  │         claude 96%         │
+;;; ├──┤                            │
+;;; │4%│                            │
+;;; └──┴────────────────────────────┘
+;;;  4%            96%
+;;; Keys: all 3 windows must get ≥1 (extreme narrow column)
+
+(ert-deftest spatial-window-test-extreme-narrow-left-column ()
+  "Extreme narrow left column: 4% width split vertically, 96% right window.
+No keyboard column center falls within the left windows, so Phase 2 must
+assign keys via stealing."
+  (let* ((win-top-left 'win-top-left)
+         (win-bot-left 'win-bot-left)
+         (win-right 'win-right)
+         ;; Real layout from user's Emacs session
+         ;; Left column: 4.2% width, split 77%/22% vertically
+         ;; Right: 95.8% width, full height
+         (window-bounds
+          `((,win-top-left 0.001 0.042 0.002 0.769)
+            (,win-bot-left 0.001 0.042 0.769 0.985)
+            (,win-right 0.042 0.999 0.002 0.985)))
+         (result (spatial-window--assign-keys nil window-bounds))
+         (top-left-keys (cdr (assq win-top-left result)))
+         (bot-left-keys (cdr (assq win-bot-left result)))
+         (right-keys (cdr (assq win-right result))))
+    ;; Left windows steal from column 0 based on y-overlap
+    ;; Top-left (77% height) gets "a" (middle row, best overlap)
+    ;; Bot-left (22% height) gets "z" (bottom row)
+    (should (seq-set-equal-p top-left-keys '("a")))
+    (should (seq-set-equal-p bot-left-keys '("z")))
+    ;; Right window gets remaining 28 keys
+    (should (seq-set-equal-p right-keys '("q" "w" "e" "r" "t" "y" "u" "i" "o" "p"
+                                          "s" "d" "f" "g" "h" "j" "k" "l" ";"
+                                          "x" "c" "v" "b" "n" "m" "," "." "/")))))
 
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
   "Returns nil and displays message when keyboard layout rows have different lengths."
