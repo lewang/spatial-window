@@ -2,6 +2,8 @@
 
 Jump to Emacs windows by pressing keys that match their spatial position on your keyboard.
 
+![Demo](demo.gif)
+
 ## Installation
 
 Requires Emacs 27.1+ and [posframe](https://github.com/tumashu/posframe).
