@@ -5,7 +5,7 @@ This document describes how spatial-window maps keyboard keys to windows based o
 ## Core Concept
 
 The algorithm treats both the keyboard and the screen as normalized 2D grids (0.0 to 1.0 in both dimensions), then
-computes overlap between each key's region and each window's region.
+computes **bidirectional overlap** between each key's region and each window's region.
 
 ## Data Model
 
@@ -37,30 +37,30 @@ For example, key "q" (row 0, col 0) covers x=[0.0, 0.1], y=[0.0, 0.33].
 
 ## Algorithm
 
-### Phase 1: Column-Based Row Distribution
+### Bidirectional Overlap Score
 
-For each keyboard column, find windows that overlap with it horizontally, then distribute keyboard rows among those
-windows.
+For each key-window pair, compute:
 
-**Balanced splits (40-60% each, odd row counts only):** When a column has exactly 2 windows with roughly equal
-height and the keyboard has an odd number of rows, the middle keyboard row is skipped to avoid ambiguity:
-- Top window → rows above middle
-- Bottom window → rows below middle
-- Middle row → unassigned (can be claimed by spanning windows in other columns)
+```
+forward_overlap  = overlap_area / key_area    (fraction of key inside window)
+backward_overlap = overlap_area / window_area (fraction of window covered by key)
+score = forward_overlap × backward_overlap
+```
 
-For even row counts (e.g., 4 rows), no row sits exactly at the boundary, so normal distribution applies.
+This **bidirectional score** gives small windows priority for keys in their region. A key that covers a large fraction
+of a small window scores higher than the same key with a large window, even if the large window has more absolute
+overlap.
 
-**Unbalanced splits:** When windows have unequal sizes, rows are distributed top-to-bottom with each window
-guaranteed at least one row:
-- 2 windows, 93%/5% split → top gets 2 rows, bottom gets 1 row
-- 3 windows → each gets 1 row
+### Phase 1: Assign by Highest Score
+
+For each key, assign it to the window with the highest bidirectional score. Skip keys where the top two windows have
+nearly equal scores (tie threshold: 5%) to avoid ambiguity.
 
 ### Phase 2: Ensure Coverage
 
-Every window must have at least one key (unless topologically impossible). For any window without keys after
-Phase 1:
+Every window must have at least one key (unless topologically impossible). For any window without keys after Phase 1:
 
-1. Find the key with highest overlap for that window
+1. Find the key with highest score for that window
 2. If unassigned, assign it
 3. If assigned to another window with >1 keys, steal it
 4. Never steal from a window that would be left with zero keys
@@ -77,8 +77,8 @@ Phase 1:
 +-------+-------+
 ```
 
-- Keys in left 5 columns → win-L (100% overlap)
-- Keys in right 5 columns → win-R (100% overlap)
+- Keys in left 5 columns → win-L (higher bidirectional score)
+- Keys in right 5 columns → win-R
 - Each window gets 15 keys (5 cols × 3 rows)
 
 ### 50/50 Horizontal Split
@@ -91,53 +91,43 @@ Phase 1:
 +---------------+
 ```
 
-- Top row keys → win-top (100% overlap with top, 0% with bottom)
-- Bottom row keys → win-bottom (0% overlap with top, 100% with bottom)
-- Middle row keys → **skipped** (50% overlap with each = tie)
+- Top row keys → win-top (100% forward, ~33% backward for top; 0% for bottom)
+- Bottom row keys → win-bottom
+- Middle row keys → **skipped** (tied scores)
 - Each window gets 10 keys (10 cols × 1 row)
 
-### 75/25 Horizontal Split
+### Extreme Narrow Column (4% width)
 
 ```
-+---------------+
-|               |
-|    win-top    |
-|               |
-+---------------+
-|  win-bottom   |
-+---------------+
++--+------------------------+
+|  |                        |
+|4%|         96%            |
+|  |                        |
++--+------------------------+
 ```
 
-- Top row: 100% top, 0% bottom → win-top
-- Middle row: 100% top, 0% bottom → win-top (middle row center at y=0.5 is inside top window)
-- Bottom row: 25% top, 75% bottom → win-bottom (clear winner, not a tie)
-- win-top gets 20 keys, win-bottom gets 10 keys
+Despite the right window having higher absolute overlap with column 0 keys, bidirectional scoring gives the narrow
+left window priority because those keys cover a large fraction of its area:
 
-### Complex Layout (2 stacked left, 1 spanning right)
+- Key "q" with narrow window: 41% forward × 43% backward = **17.7%**
+- Key "q" with large window: 58% forward × 2% backward = **1.2%**
 
-```
-+-------+-------+
-| top-L |       |
-+-------+ win-R |
-| bot-L |       |
-+-------+-------+
-```
+The narrow window wins decisively.
 
-- Right half keys → win-R (all 3 rows, 15 keys)
-- Left half, top row → win-top-L
-- Left half, bottom row → win-bot-L
-- Left half, middle row → **skipped** (50/50 tie between top-L and bot-L)
-- win-R gets middle row for its column because it spans full height (no tie)
+## Why Bidirectional Scoring Works
 
-## Why This Works
+| Scenario | Forward | Backward | Score | Result |
+|----------|---------|----------|-------|--------|
+| Key fully in small window | High | High | **High** | Small window wins |
+| Key partly in large window | High | Low | Low | Large window loses |
+| 50/50 split boundary | Equal | Equal | Tied | Skip key |
+| Key fully in spanning window | High | Medium | Medium | Depends on competition |
 
-| Scenario | Overlaps | Result |
-|----------|----------|--------|
-| Single window | 100% | Gets all 30 keys |
-| 50/50 split, boundary keys | 50% / 50% | Skip (tie) |
-| 75/25 split, boundary keys | 75% / 25% | Assign to larger |
-| Spanning window | 100% in its region | Gets all rows it spans |
-| Tiny window (5%) | Low overlap | Phase 2 guarantees ≥1 key |
+The bidirectional approach naturally handles:
+- Tiny windows getting their "home" keys
+- Large windows not stealing from small neighbors
+- Ties at exact boundaries
+- No special cases needed
 
 ## Scalability
 
@@ -145,6 +135,6 @@ The algorithm works for:
 
 - Different keyboard layouts (any row/column count)
 - Any window configuration
-- Balanced-split middle-row skipping activates only for odd row counts (where a true middle row exists)
+- Extreme aspect ratios and splits
 
-The math naturally handles all cases through overlap computation.
+The math naturally handles all cases through bidirectional overlap computation.

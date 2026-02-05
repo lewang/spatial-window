@@ -9,27 +9,6 @@
 (require 'spatial-window-geometry)
 (require 'spatial-window)  ; for spatial-window--get-layout
 
-;;; Overlap function tests
-
-(ert-deftest spatial-window-test-overlap-full ()
-  "Full overlap returns 1.0."
-  (should (= (spatial-window--overlap 0.0 1.0 0.0 1.0) 1.0))
-  (should (= (spatial-window--overlap 0.2 0.4 0.0 1.0) 1.0)))
-
-(ert-deftest spatial-window-test-overlap-partial ()
-  "Partial overlap returns correct fraction."
-  (should (= (spatial-window--overlap 0.0 1.0 0.5 1.0) 0.5))
-  (should (= (spatial-window--overlap 0.0 0.5 0.25 0.75) 0.5)))
-
-(ert-deftest spatial-window-test-overlap-none ()
-  "No overlap returns 0.0."
-  (should (= (spatial-window--overlap 0.0 0.3 0.5 1.0) 0.0))
-  (should (= (spatial-window--overlap 0.7 1.0 0.0 0.3) 0.0)))
-
-(ert-deftest spatial-window-test-overlap-zero-range ()
-  "Zero-size range returns 0.0."
-  (should (= (spatial-window--overlap 0.5 0.5 0.0 1.0) 0.0)))
-
 ;;; Key assignment tests
 
 ;;; ┌───────────────────┐
@@ -176,12 +155,13 @@
          (main-keys (cdr (assq win-main result)))
          (top-keys (cdr (assq win-sidebar-top result)))
          (bot-keys (cdr (assq win-sidebar-bot result))))
-    ;; Sidebar windows steal from rightmost column based on overlap
-    (should (seq-set-equal-p top-keys '("p")))
+    ;; Sidebar-top (92% of sidebar height) gets top 2 rows of rightmost column
+    (should (seq-set-equal-p top-keys '("p" ";")))
+    ;; Sidebar-bot (8% of sidebar height) gets bottom row
     (should (seq-set-equal-p bot-keys '("/")))
-    ;; Main gets remaining 28 keys
+    ;; Main gets remaining 27 keys
     (should (seq-set-equal-p main-keys '("q" "w" "e" "r" "t" "y" "u" "i" "o"
-                                          "a" "s" "d" "f" "g" "h" "j" "k" "l" ";"
+                                          "a" "s" "d" "f" "g" "h" "j" "k" "l"
                                           "z" "x" "c" "v" "b" "n" "m" "," ".")))))
 
 ;;; ┌───────────────────┐
@@ -270,11 +250,11 @@
     ;; Right half gets claude (full height right side)
     (should (seq-set-equal-p (cdr (assq win-claude result))
                              '("y" "u" "i" "o" "p" "h" "j" "k" "l" ";" "n" "m" "," "." "/")))
-    ;; Bottom-left small windows each get keys from their positions
+    ;; Bottom-left small windows - bidirectional scoring distributes by area
     (should (seq-set-equal-p (cdr (assq win-sw1 result)) '("a")))
-    (should (seq-set-equal-p (cdr (assq win-sw2 result)) '("s")))
-    (should (seq-set-equal-p (cdr (assq win-sw3 result)) '("x" "c")))
-    (should (seq-set-equal-p (cdr (assq win-sw4 result)) '("v" "b")))
+    (should (seq-set-equal-p (cdr (assq win-sw2 result)) '("x")))
+    (should (seq-set-equal-p (cdr (assq win-sw3 result)) '("s" "d" "c")))
+    (should (seq-set-equal-p (cdr (assq win-sw4 result)) '("f" "g" "v" "b")))
     (should (seq-set-equal-p (cdr (assq win-backtrace result)) '("z")))))
 
 ;;; ┌─────────────┬───────┐
@@ -306,12 +286,14 @@
          (main-keys (cdr (assq win-main result)))
          (diff-keys (cdr (assq win-diff result)))
          (claude-keys (cdr (assq win-claude result))))
-    ;; Unbalanced 93%/5% split: top 2 rows → main, bottom row → diff
-    ;; Left side has 6 columns (cols 0-5, x < 0.6)
+    ;; Main editor (93% of left, 63% width) gets most left-side keys
+    ;; Bidirectional scoring gives it rows 0-1 plus most of row 2
     (should (seq-set-equal-p main-keys '("q" "w" "e" "r" "t" "y"
-                                          "a" "s" "d" "f" "g" "h")))
-    (should (seq-set-equal-p diff-keys '("z" "x" "c" "v" "b" "n")))
-    ;; Claude window spans full height, gets all 3 rows of right 4 cols
+                                          "a" "s" "d" "f" "g" "h"
+                                          "x" "c" "v" "b" "n")))
+    ;; Thin diff panel (5% height) only gets "z" - small window, small share
+    (should (seq-set-equal-p diff-keys '("z")))
+    ;; Claude window spans full height on right, gets all 4 right columns
     (should (seq-set-equal-p claude-keys '("u" "i" "o" "p"
                                             "j" "k" "l" ";"
                                             "m" "," "." "/")))))
@@ -328,8 +310,7 @@
 
 (ert-deftest spatial-window-test-extreme-narrow-left-column ()
   "Extreme narrow left column: 4% width split vertically, 96% right window.
-No keyboard column center falls within the left windows, so Phase 2 must
-assign keys via stealing."
+Bidirectional scoring gives small windows priority for their home keys."
   (let* ((win-top-left 'win-top-left)
          (win-bot-left 'win-bot-left)
          (win-right 'win-right)
@@ -344,13 +325,12 @@ assign keys via stealing."
          (top-left-keys (cdr (assq win-top-left result)))
          (bot-left-keys (cdr (assq win-bot-left result)))
          (right-keys (cdr (assq win-right result))))
-    ;; Left windows steal from column 0 based on y-overlap
-    ;; Top-left (77% height) gets "a" (middle row, best overlap)
-    ;; Bot-left (22% height) gets "z" (bottom row)
-    (should (seq-set-equal-p top-left-keys '("a")))
+    ;; Top-left (77% of column height) gets q and a - its "home" keys
+    (should (seq-set-equal-p top-left-keys '("q" "a")))
+    ;; Bot-left (22% of column height) gets z - bottom row
     (should (seq-set-equal-p bot-left-keys '("z")))
-    ;; Right window gets remaining 28 keys
-    (should (seq-set-equal-p right-keys '("q" "w" "e" "r" "t" "y" "u" "i" "o" "p"
+    ;; Right window gets remaining 27 keys
+    (should (seq-set-equal-p right-keys '("w" "e" "r" "t" "y" "u" "i" "o" "p"
                                           "s" "d" "f" "g" "h" "j" "k" "l" ";"
                                           "x" "c" "v" "b" "n" "m" "," "." "/")))))
 
