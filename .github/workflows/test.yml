@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs-version: ['27.1', '28.2', '29.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - name: Install dependencies
+        run: |
+          emacs --batch --eval "
+            (progn
+              (require 'package)
+              (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t)
+              (package-initialize)
+              (package-refresh-contents)
+              (package-install 'posframe))"
+
+      - name: Run tests
+        run: |
+          emacs --batch -L . \
+            -l spatial-window-geometry-test.el \
+            -l spatial-window-test.el \
+            -f ert-run-tests-batch-and-exit
