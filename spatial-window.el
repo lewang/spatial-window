@@ -420,7 +420,8 @@ k = kill, K = kill-multi, s = swap."
 ;;;###autoload
 (defun spatial-window-select (&optional arg)
   "Select a window by pressing a key corresponding to its spatial position.
-Shows keyboard grid overlays in each window during selection.
+With 2 windows, simply toggle to the other window.
+With 3+ windows, show keyboard grid overlays for spatial selection.
 
 With prefix ARG (\\[universal-argument]), prompt for action:
   k - Kill: select one window to delete
@@ -430,12 +431,14 @@ With prefix ARG (\\[universal-argument]), prompt for action:
 When `spatial-window-expert-mode' is non-nil, overlays are hidden by
 default.  Press C-h to toggle them."
   (interactive "P")
-  (let ((windows (spatial-window--frame-windows)))
-    (if (<= (length windows) 1)
-        (message "Only one window")
-      (if arg
-          (spatial-window--prompt-action)
-        (spatial-window--setup-transient-mode
+  (let ((num-windows (length (spatial-window--frame-windows))))
+    (cond
+     ((<= num-windows 1) (message "Only one window"))
+     (arg (spatial-window--prompt-action))
+     ((= num-windows 2)
+      (other-window 1)
+      (message "Toggled window"))
+     (t (spatial-window--setup-transient-mode
          (spatial-window--make-selection-keymap))))))
 
 (provide 'spatial-window)
