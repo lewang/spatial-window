@@ -334,6 +334,41 @@ Bidirectional scoring gives small windows priority for their home keys."
                                           "s" "d" "f" "g" "h" "j" "k" "l" ";"
                                           "x" "c" "v" "b" "n" "m" "," "." "/")))))
 
+;;; ┌────────────────────────┬────────────────┐
+;;; │      top-left (60%)    │  top-right 40% │
+;;; ├───────────┬────────────┴────────────────┤
+;;; │ bot-left  │      bot-right (67%)        │
+;;; │   (33%)   │                             │
+;;; └───────────┴─────────────────────────────┘
+;;; Keys: misaligned vertical splits - bidirectional scoring resolves conflicts
+
+(ert-deftest spatial-window-test-misaligned-vertical-splits ()
+  "4 windows where top row split (60/40) differs from bottom row split (33/67).
+Bidirectional scoring handles overlapping coverage areas."
+  (let* ((win-top-left 'win-top-left)
+         (win-top-right 'win-top-right)
+         (win-bot-left 'win-bot-left)
+         (win-bot-right 'win-bot-right)
+         ;; Top row: 60%/40% split, Bottom row: 33%/67% split
+         (window-bounds
+          `((,win-top-left 0.001 0.598 0.002 0.5)
+            (,win-top-right 0.598 0.999 0.002 0.5)
+            (,win-bot-left 0.001 0.327 0.5 0.985)
+            (,win-bot-right 0.327 0.999 0.5 0.985)))
+         (result (spatial-window--assign-keys nil window-bounds))
+         (top-left-keys (cdr (assq win-top-left result)))
+         (top-right-keys (cdr (assq win-top-right result)))
+         (bot-left-keys (cdr (assq win-bot-left result)))
+         (bot-right-keys (cdr (assq win-bot-right result))))
+    ;; Top-left (60% width, top row) gets middle row keys due to overlap resolution
+    (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t" "y" "f" "g" "h")))
+    ;; Top-right (40% width, top row) gets right side plus middle-row right
+    (should (seq-set-equal-p top-right-keys '("u" "i" "o" "p" "j" "k" "l" ";")))
+    ;; Bot-left (33% width, bottom rows) gets left 3 cols × 2 rows
+    (should (seq-set-equal-p bot-left-keys '("a" "s" "d" "z" "x" "c")))
+    ;; Bot-right (67% width, bottom rows) gets remaining bottom-right
+    (should (seq-set-equal-p bot-right-keys '("v" "b" "n" "m" "," "." "/")))))
+
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
   "Returns nil and displays message when keyboard layout rows have different lengths."
   (let ((invalid-layout '(("q" "w" "e")
