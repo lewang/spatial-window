@@ -354,18 +354,18 @@ a  s  d  ·  g  h  j  k  l  ;     posframe-top=6(g,h,j,k,l,;)
 z  x  c  v  b  n  m  ,  .  /     posframe-bot=7  ("f" unassigned)
 ```
 
-V3 grid (29/30 assigned) — same as V2:
+V3 grid (28/30 assigned) — y-dominance 0.4 reassigns f to posframe-top, `,` stolen by posframe-top:
 ```
-q  w  e  r  t  y  u  i  o  p     narrow=1(q) wide=9 magit=6(a,s,d,z,x,c)
-a  s  d  ·  g  h  j  k  l  ;     posframe-top=6(g,h,j,k,l,;)
-z  x  c  v  b  n  m  ,  .  /     posframe-bot=7  ("f" unassigned)
+q  w  e  r  t  y  u  i  o  p     narrow=1(q) wide=9 magit=4(s,z,x,c)
+·  s  ·  f  g  h  j  k  l  ;     posframe-top=8(f,g,h,j,k,l,;,,)
+z  x  c  v  b  n  m  ,  .  /     posframe-bot=6(v,b,n,m,.,/)  (a,d unassigned)
 ```
 
 Row 0/1/2 key-owner grid (N=narrow, W=wide, G=magit, P=posframe-top, Q=posframe-bot):
 ```
 Row 0: N W W W W W W W W W
-Row 1: G G G · P P P P P P  ← f unassigned (near-50/50 y-split)
-Row 2: G G G Q Q Q Q Q Q Q
+Row 1: · G · P P P P P P P  ← a,d unassigned (near-50/50 y-split on left)
+Row 2: G G G Q Q Q Q P Q Q  ← , stolen by posframe-top
 ```
 
 No consolidation: narrow steals q (col 1, row 1), but has 0 y-overlap on a (row 2) because narrow only covers
@@ -386,8 +386,7 @@ the top 49% of the frame (row 2 maps to the middle third, y=0.33-0.67).
 | ide-layout-thin-panel | 27 | 30 | 30 | claude: 9->12, +3 keys | — |
 | extreme-narrow-left | 30 | 30 | 30 | top-left: 2->1 | top-left: 1->2 (consolidation) |
 | misaligned-vertical | 19 | 21 | 21 | TL: 6->7, BR: 6->7 | — |
-| misaligned-splits-edge | 20 | 21 | 21 | — | — |
-| real-dev-session | 27 | 29 | 29 | magit: 3->6 | — |
+| real-dev-session | 27 | 29 | 28 | magit: 3->6 | y-dominance reassigns f,`,`; a,d unassigned |
 
 ## Middle-Row Threshold
 
@@ -397,11 +396,12 @@ The threshold is the minimum deviation from 50/50 before the bigger window wins 
 | Version | Threshold Split | Off-Center | How Computed |
 |---------|:--------------:|:----------:|--------------|
 | V1 (main) | 41.7/58.3 | 8.3% | Phase 1 requires >75% overlap: `(0.667-s)/0.333 > 0.75` → `s < 0.417` |
-| V2/V3 (worktree) | 49.2/50.8 | 0.8% | 0.05 margin: `3-6s > 0.05` → `s < 0.4917` |
-| V4 (proposed) | 37.5/62.5 | 12.5% | y-dominance 0.75: `3-6s > 0.75` → `s < 0.375` |
+| V2 | 49.2/50.8 | 0.8% | 0.05 margin: `3-6s > 0.05` → `s < 0.4917` |
+| V3 (current) | 43.3/56.7 | 6.7% | y-dominance 0.4: `3-6s > 0.4` → `s < 0.433` |
 
-V2/V3's single 0.05 margin is too sensitive for the coarse 3-row y-axis. V4 restores and exceeds V1's
-behavior for vertical splits while keeping V2/V3's simpler x-axis handling.
+V2's single 0.05 margin was too sensitive for the coarse 3-row y-axis. V3 adds y-dominance margin 0.4,
+landing between V1 and V2 — close to V1's behavior for vertical splits while keeping V2's simpler x-axis
+handling.
 
 ## Trade-offs
 

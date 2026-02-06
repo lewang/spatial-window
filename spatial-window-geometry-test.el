@@ -115,7 +115,7 @@
 (ert-deftest spatial-window-test-near-equal-vertical-split ()
   "Near-equal vertical split: 49/51 at y=0.486 should leave middle row unmapped.
 The split is only ~2% off center — both windows cover roughly half the screen.
-Y-dominance margin (0.75) requires at least a 62.5/37.5 split to assign."
+Y-dominance margin (0.4) requires at least a ~57/43 split to assign."
   (let* ((win-claude 'win-claude)
          (win-magit-rev 'win-magit-rev)
          (win-magit 'win-magit)
@@ -163,8 +163,8 @@ Search for the largest s where the bottom window gets 20 keys (wins middle row).
     (let ((bigger-side-pct (- 100.0 (* hi 100.0))))
       (message "Middle-row threshold: split at %.4f%% → bigger side %.1f%%"
                (* hi 100.0) bigger-side-pct)
-      ;; V4 (y-dominance 0.75): threshold ~37.5%, bigger side ~62.5%
-      (should (>= bigger-side-pct 62.0)))))
+      ;; y-dominance 0.4: threshold ~43.3%, bigger side ~56.7%
+      (should (>= bigger-side-pct 56.0)))))
 
 ;;; ┌────┬───────────┬──────┐
 ;;; │    │ T         │      │
@@ -489,13 +489,13 @@ Middle row partially assigned where one window clearly dominates a cell."
 ;;;
 ;;; Row 0: N W W W W W W W W W
 ;;; Row 1: · G · P P P P P P P  ← a,d unassigned (near-50/50 y-split)
-;;; Row 2: G G G · Q · · P · ·  ← P steals ",", Q steals "v" (near-equal y-split)
+;;; Row 2: G G G Q Q Q Q P Q Q  ← Q wins bottom row right, P steals ","
 
 (ert-deftest spatial-window-test-real-dev-session-layout ()
   "Real 5-window layout: narrow code window, wide code, magit, two posframes.
 Y-dominance: code-wide vs posframe-top near-50/50 y-split at 0.487 leaves
-middle row mostly unassigned.  posframe-top/bot near-equal (26/24%) leaves
-bottom row right unassigned.  posframe-top recovers via steal+consolidation."
+middle row mostly unassigned.  posframe-bot wins bottom row right (y-dominance
+over posframe-top).  posframe-top recovers via steal+consolidation."
   (let* ((win-posframe-top 'win-posframe-top)
          (win-posframe-bot 'win-posframe-bot)
          (win-code-narrow 'win-code-narrow)
@@ -523,10 +523,10 @@ bottom row right unassigned.  posframe-top recovers via steal+consolidation."
     (should (seq-set-equal-p magit-keys '("s" "z" "x" "c")))
     ;; Posframe-top (keyless) steals middle row + "," from bottom via consolidation
     (should (seq-set-equal-p posframe-top-keys '("f" "g" "h" "j" "k" "l" ";" ",")))
-    ;; Posframe-bot steals "v" (near-equal y-split with posframe-top)
-    (should (seq-set-equal-p posframe-bot-keys '("v")))
-    ;; All 5 windows have keys, 23 total, no duplicates
-    (should (= (length all-keys) 23))
+    ;; Posframe-bot wins bottom row right via y-dominance over posframe-top
+    (should (seq-set-equal-p posframe-bot-keys '("v" "b" "n" "m" "." "/")))
+    ;; All 5 windows have keys, 28 total, no duplicates
+    (should (= (length all-keys) 28))
     (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
 
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()

@@ -69,12 +69,12 @@ A cell goes to the best-overlapping window only if its overlap exceeds
 the second-best by at least this margin.  Cells below the margin are
 left unassigned (ambiguous).")
 
-(defconst spatial-window--y-dominance-margin 0.75
+(defconst spatial-window--y-dominance-margin 0.4
   "Minimum y-overlap advantage to assign when x-overlaps are similar.
 With only 3 keyboard rows, a tiny height difference produces a
 disproportionate per-cell margin.  This threshold requires the winner
 to dominate in at least one dimension (x or y) before assignment.
-0.75 corresponds to a ~62.5/37.5 height split.")
+0.4 corresponds to a ~70/30 height split.")
 
 (defun spatial-window--cell-overlap (cell-row cell-col kbd-rows kbd-cols
                                                win-x-start win-x-end win-y-start win-y-end)
