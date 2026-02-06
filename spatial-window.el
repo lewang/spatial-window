@@ -199,17 +199,28 @@ Returns non-nil if overlays were shown, nil if there are too many windows."
       (beep)
       nil)))
 
+(defmacro spatial-window--with-target-window (&rest body)
+  "Execute BODY with `win' bound to the target window.
+If selection mode has ended, pass key through to normal processing.
+If no target window found (ambiguous key), do nothing."
+  (declare (indent 0) (debug t))
+  `(if (null spatial-window--current-assignments)
+       (setq unread-command-events
+             (listify-key-sequence (this-command-keys-vector)))
+     (when-let* ((win (spatial-window--get-target-window)))
+       ,@body)))
+
+(defun spatial-window--exit-selection-mode ()
+  "Exit selection mode: clear flag and remove overlays."
+  (setq spatial-window--selection-active nil)
+  (spatial-window--remove-overlays))
+
 (defun spatial-window--select-by-key ()
   "Select window corresponding to the key that invoked this command."
   (interactive)
-  (if (null spatial-window--current-assignments)
-      ;; Selection mode already ended; pass key through to normal processing
-      (setq unread-command-events
-            (listify-key-sequence (this-command-keys-vector)))
-    (when-let* ((win (spatial-window--get-target-window)))
-      (setq spatial-window--selection-active nil)
-      (spatial-window--remove-overlays)
-      (select-window win))))
+  (spatial-window--with-target-window
+    (spatial-window--exit-selection-mode)
+    (select-window win)))
 
 (defun spatial-window--abort ()
   "Abort window selection and clean up overlays."
@@ -295,15 +306,11 @@ If minibuffer is active, SPC selects it."
 (defun spatial-window--kill-by-key ()
   "Kill the window corresponding to the pressed key."
   (interactive)
-  (if (null spatial-window--current-assignments)
-      (setq unread-command-events
-            (listify-key-sequence (this-command-keys-vector)))
-    (when-let* ((win (spatial-window--get-target-window)))
-      (setq spatial-window--selection-active nil)
-      (spatial-window--remove-overlays)
-      (when (window-live-p win)
-        (delete-window win))
-      (message "Killed window"))))
+  (spatial-window--with-target-window
+    (spatial-window--exit-selection-mode)
+    (when (window-live-p win)
+      (delete-window win))
+    (message "Killed window")))
 
 (defun spatial-window--enter-kill-mode ()
   "Enter kill mode for deleting one window."
@@ -323,18 +330,15 @@ If minibuffer is active, SPC selects it."
 (defun spatial-window--toggle-selection ()
   "Toggle the selection of the window corresponding to the pressed key."
   (interactive)
-  (if (null spatial-window--current-assignments)
-      (setq unread-command-events
-            (listify-key-sequence (this-command-keys-vector)))
-    (when-let* ((win (spatial-window--get-target-window)))
-      (if (memq win spatial-window--selected-windows)
-          (setq spatial-window--selected-windows
-                (delq win spatial-window--selected-windows))
-        (push win spatial-window--selected-windows))
-      ;; Update highlighted and refresh overlays
-      (setq spatial-window--highlighted-windows spatial-window--selected-windows)
-      (spatial-window--show-overlays spatial-window--highlighted-windows)
-      (spatial-window--kill-multi-mode-message))))
+  (spatial-window--with-target-window
+    (if (memq win spatial-window--selected-windows)
+        (setq spatial-window--selected-windows
+              (delq win spatial-window--selected-windows))
+      (push win spatial-window--selected-windows))
+    ;; Update highlighted and refresh overlays
+    (setq spatial-window--highlighted-windows spatial-window--selected-windows)
+    (spatial-window--show-overlays spatial-window--highlighted-windows)
+    (spatial-window--kill-multi-mode-message)))
 
 (defun spatial-window--execute-kill-multi ()
   "Kill all selected windows and clean up."
@@ -378,15 +382,11 @@ If minibuffer is active, SPC selects it."
 (defun spatial-window--select-swap-target ()
   "Select target window for swap operation."
   (interactive)
-  (if (null spatial-window--current-assignments)
-      (setq unread-command-events
-            (listify-key-sequence (this-command-keys-vector)))
-    (when-let* ((win (spatial-window--get-target-window)))
-      (setq spatial-window--selection-active nil)
-      (spatial-window--remove-overlays)
-      (spatial-window--swap-windows spatial-window--source-window win)
-      (select-window win)
-      (message "Swapped windows"))))
+  (spatial-window--with-target-window
+    (spatial-window--exit-selection-mode)
+    (spatial-window--swap-windows spatial-window--source-window win)
+    (select-window win)
+    (message "Swapped windows")))
 
 (defun spatial-window--enter-swap-mode ()
   "Enter swap mode for exchanging window buffers."
