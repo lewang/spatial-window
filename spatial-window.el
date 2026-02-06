@@ -420,8 +420,7 @@ k = kill, K = kill-multi, s = swap."
 ;;;###autoload
 (defun spatial-window-select (&optional arg)
   "Select a window by pressing a key corresponding to its spatial position.
-With 2 windows, simply toggle to the other window.
-With 3+ windows, show keyboard grid overlays for spatial selection.
+Shows keyboard grid overlays for spatial selection.
 
 With prefix ARG (\\[universal-argument]), prompt for action:
   k - Kill: select one window to delete
@@ -435,9 +434,6 @@ default.  Press C-h to toggle them."
     (cond
      ((<= num-windows 1) (message "Only one window"))
      (arg (spatial-window--prompt-action))
-     ((= num-windows 2)
-      (other-window 1)
-      (message "Toggled window"))
      (t (spatial-window--setup-transient-mode
          (spatial-window--make-selection-keymap))))))
 

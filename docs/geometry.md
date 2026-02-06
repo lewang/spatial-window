@@ -139,4 +139,4 @@ Result:
 emacs --batch -L . -l spatial-window-geometry-test.el -f ert-run-tests-batch-and-exit
 ```
 
-All 17 tests should pass.
+All tests should pass.
