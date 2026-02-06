@@ -40,6 +40,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'subr-x)
 (require 'spatial-window-geometry)
 
 (declare-function posframe-show "posframe")
