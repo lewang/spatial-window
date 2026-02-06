@@ -74,7 +74,7 @@ left unassigned (ambiguous).")
 With only 3 keyboard rows, a tiny height difference produces a
 disproportionate per-cell margin.  This threshold requires the winner
 to dominate in at least one dimension (x or y) before assignment.
-0.4 corresponds to a ~70/30 height split.")
+0.4 corresponds to a ~57/43 height split.")
 
 (defun spatial-window--cell-overlap (cell-row cell-col kbd-rows kbd-cols
                                                win-x-start win-x-end win-y-start win-y-end)
@@ -184,7 +184,7 @@ donor that has >1 key.  Iterates until convergence.  Modifies FINAL."
                   ;; Column consolidation: extend in same column
                   ;; Steal from owner only if owner is in a different visual
                   ;; column (< 50% horizontal overlap with consolidating window).
-                  (dolist (ext-row (number-sequence 0 (1- kbd-rows)))
+                  (dotimes (ext-row kbd-rows)
                     (unless (= ext-row best-row)
                       (let* ((ext-ov (spatial-window--cell-overlap
                                       ext-row best-col kbd-rows kbd-cols
@@ -215,7 +215,7 @@ donor that has >1 key.  Iterates until convergence.  Modifies FINAL."
                           (when ext-owner
                             (puthash ext-owner (1- (gethash ext-owner counts 0)) counts))))))
                   ;; Row consolidation: extend in same row
-                  (dolist (ext-col (number-sequence 0 (1- kbd-cols)))
+                  (dotimes (ext-col kbd-cols)
                     (unless (= ext-col best-col)
                       (let* ((cell-x0 (/ (float ext-col) kbd-cols))
                              (cell-x1 (/ (float (1+ ext-col)) kbd-cols))

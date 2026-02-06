@@ -155,7 +155,7 @@ Y-dominance margin (0.4) requires at least a ~57/43 split to assign."
 
 (ert-deftest spatial-window-test-3-left-stacked-1-right ()
   "3 stacked windows on left (50/24/24) + full-height right.
-Column consolidation only takes unassigned cells, not owned ones."
+Column consolidation takes unassigned cells; same-column owners are not stolen from."
   (let* ((win-tools 'win-tools)
          (win-claude 'win-claude)
          (win-spatial 'win-spatial)
