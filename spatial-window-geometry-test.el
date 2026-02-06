@@ -137,6 +137,52 @@ Y-dominance margin (0.4) requires at least a ~57/43 split to assign."
                                            "j" "k" "l" ";"
                                            "m" "," "." "/")))))
 
+;;; ┌──────────────────┬─────────────┐
+;;; │  S               │             │
+;;; │  59w×50h         │             │
+;;; ├──────────────────┤   C         │
+;;; │  J               │   41w×98h   │
+;;; │  59w×24h         │             │
+;;; ├──────────────────┤             │
+;;; │  T               │             │
+;;; │  59w×24h         │             │
+;;; └──────────────────┴─────────────┘
+;;; S=spatial  J=journal  T=tools  C=claude
+;;;
+;;; Row 0: S S S S S S C C C C
+;;; Row 1: J J J J J J C C C C
+;;; Row 2: T T T T T T C C C C
+
+(ert-deftest spatial-window-test-3-left-stacked-1-right ()
+  "3 stacked windows on left (50/24/24) + full-height right.
+Column consolidation only takes unassigned cells, not owned ones."
+  (let* ((win-tools 'win-tools)
+         (win-claude 'win-claude)
+         (win-spatial 'win-spatial)
+         (win-journal 'win-journal)
+         (window-bounds
+          `((,win-tools   0.0011695906432748538 0.5894736842105263
+                          0.7423076923076923 0.9846153846153847)
+            (,win-claude  0.5894736842105263 0.9988304093567252
+                          0.0019230769230769232 0.9846153846153847)
+            (,win-spatial 0.0011695906432748538 0.5894736842105263
+                          0.0019230769230769232 0.49903846153846154)
+            (,win-journal 0.0011695906432748538 0.5894736842105263
+                          0.49903846153846154 0.7423076923076923)))
+         (result (spatial-window--assign-keys nil window-bounds))
+         (spatial-keys (cdr (assq win-spatial result)))
+         (claude-keys (cdr (assq win-claude result)))
+         (journal-keys (cdr (assq win-journal result)))
+         (tools-keys (cdr (assq win-tools result))))
+    ;; spatial: top row, left 6 columns
+    (should (seq-set-equal-p spatial-keys '("q" "w" "e" "r" "t" "y")))
+    ;; claude: right 4 columns, all rows
+    (should (seq-set-equal-p claude-keys '("u" "i" "o" "p"
+                                           "j" "k" "l" ";"
+                                           "m" "," "." "/")))
+    (should (seq-set-equal-p journal-keys '("a" "s" "d" "f" "g" "h")))
+    (should (seq-set-equal-p tools-keys '("z" "x" "c" "v" "b" "n")))))
+
 ;;; Middle row assignment threshold characterization
 ;;;
 ;;; With 3 keyboard rows, the middle row (y=0.33-0.67) is contested in any
@@ -489,13 +535,13 @@ Middle row partially assigned where one window clearly dominates a cell."
 ;;;
 ;;; Row 0: N W W W W W W W W W
 ;;; Row 1: · G · P P P P P P P  ← a,d unassigned (near-50/50 y-split)
-;;; Row 2: G G G Q Q Q Q P Q Q  ← Q wins bottom row right, P steals ","
+;;; Row 2: G G G Q Q Q Q Q Q Q  ← Q wins bottom row right (y-dominance over P)
 
 (ert-deftest spatial-window-test-real-dev-session-layout ()
   "Real 5-window layout: narrow code window, wide code, magit, two posframes.
 Y-dominance: code-wide vs posframe-top near-50/50 y-split at 0.487 leaves
 middle row mostly unassigned.  posframe-bot wins bottom row right (y-dominance
-over posframe-top).  posframe-top recovers via steal+consolidation."
+over posframe-top)."
   (let* ((win-posframe-top 'win-posframe-top)
          (win-posframe-bot 'win-posframe-bot)
          (win-code-narrow 'win-code-narrow)
@@ -521,42 +567,13 @@ over posframe-top).  posframe-top recovers via steal+consolidation."
     (should (seq-set-equal-p wide-keys '("w" "e" "r" "t" "y" "u" "i" "o" "p")))
     ;; Magit (32% width, bottom-left) gets left columns
     (should (seq-set-equal-p magit-keys '("s" "z" "x" "c")))
-    ;; Posframe-top (keyless) steals middle row + "," from bottom via consolidation
-    (should (seq-set-equal-p posframe-top-keys '("f" "g" "h" "j" "k" "l" ";" ",")))
+    ;; Posframe-top (keyless) steals middle row
+    (should (seq-set-equal-p posframe-top-keys '("f" "g" "h" "j" "k" "l" ";")))
     ;; Posframe-bot wins bottom row right via y-dominance over posframe-top
-    (should (seq-set-equal-p posframe-bot-keys '("v" "b" "n" "m" "." "/")))
+    (should (seq-set-equal-p posframe-bot-keys '("v" "b" "n" "m" "," "." "/")))
     ;; All 5 windows have keys, 28 total, no duplicates
     (should (= (length all-keys) 28))
     (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
-
-;;; Middle row assignment threshold characterization
-;;;
-;;; With 3 keyboard rows, the middle row (y=0.33-0.67) is contested in any
-;;; top/bottom split.  Binary-search for the split point where the bigger
-;;; window starts winning the middle row.
-
-(ert-deftest spatial-window-test-middle-row-assignment-threshold ()
-  "Binary-search for the vertical split threshold where bigger window wins middle row.
-With two full-width windows split at y=s, the bottom window is taller when s<0.5.
-Search for the largest s where the bottom window gets 20 keys (wins middle row)."
-  (let ((lo 0.3) (hi 0.5))
-    ;; Binary search: lo = bottom wins middle row, hi = middle row unassigned
-    (dotimes (_ 30)
-      (let* ((mid (* 0.5 (+ lo hi)))
-             (win-top 'win-top) (win-bot 'win-bot)
-             (window-bounds `((,win-top 0.0 1.0 0.0 ,mid)
-                              (,win-bot 0.0 1.0 ,mid 1.0)))
-             (result (spatial-window--assign-keys nil window-bounds))
-             (bot-keys (cdr (assq win-bot result))))
-        (if (= (length bot-keys) 20)
-            (setq lo mid)
-          (setq hi mid))))
-    ;; Threshold is at hi (bigger-side percentage = 100 - hi*100)
-    (let ((bigger-side-pct (- 100.0 (* hi 100.0))))
-      (message "Middle-row threshold: split at %.4f%% → bigger side %.1f%%"
-               (* hi 100.0) bigger-side-pct)
-      ;; V1 (75% ownership threshold): threshold ~41.7%, bigger side ~58.3%
-      (should (> bigger-side-pct 57.0)))))
 
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
   "Returns nil and displays message when keyboard layout rows have different lengths."

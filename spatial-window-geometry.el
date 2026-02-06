@@ -182,6 +182,8 @@ donor that has >1 key.  Iterates until convergence.  Modifies FINAL."
                   (when old-owner
                     (puthash old-owner (1- (gethash old-owner counts 0)) counts))
                   ;; Column consolidation: extend in same column
+                  ;; Steal from owner only if owner is in a different visual
+                  ;; column (< 50% horizontal overlap with consolidating window).
                   (dolist (ext-row (number-sequence 0 (1- kbd-rows)))
                     (unless (= ext-row best-row)
                       (let* ((ext-ov (spatial-window--cell-overlap
@@ -191,7 +193,12 @@ donor that has >1 key.  Iterates until convergence.  Modifies FINAL."
                              (ext-can-take
                               (and (> ext-ov 0.2)
                                    (or (null ext-owner)
-                                       (> (gethash ext-owner counts 0) 1))
+                                       (and (> (gethash ext-owner counts 0) 1)
+                                            (let* ((own-wb (assq ext-owner window-bounds))
+                                                   (ov-x (max 0.0 (- (min (nth 2 wb) (nth 2 own-wb))
+                                                                      (max (nth 1 wb) (nth 1 own-wb)))))
+                                                   (win-w (- (nth 2 wb) (nth 1 wb))))
+                                              (< (/ ov-x win-w) 0.5))))
                                    (not (cl-some
                                          (lambda (other-wb)
                                            (and (not (eq (car other-wb) win))
