@@ -14,8 +14,9 @@
 (ert-deftest spatial-window-test-select-by-key ()
   "Selects window matching pressed key from assignments."
   (let* ((win1 (selected-window))
-         (spatial-window--current-assignments
-          `((,win1 . ("q" "w" "e")))))
+         (spatial-window--state
+          (spatial-window--make-state
+           :assignments `((,win1 . ("q" "w" "e"))))))
     (cl-letf (((symbol-function 'this-command-keys)
                (lambda () "w"))
               ((symbol-function 'select-window)
