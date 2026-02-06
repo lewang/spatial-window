@@ -139,11 +139,14 @@
 ;;; │                     │  │ 8%
 ;;; └─────────────────────┴──┘
 ;;;                       4.5%
-;;; Keys: all windows get ≥1, ";" unmapped (no window has >75% overlap)
+;;; Keys:
+;;; q w e r t y u i o │ p    ← sidebar-top steals "p"
+;;; a s d f g h j k l │ ;    ← main keeps ";" (sidebar too narrow to win by margin)
+;;; z x c v b n m , . │ /    ← sidebar-bot steals "/"
 
 (ert-deftest spatial-window-test-assign-keys-extreme-split ()
   "Extreme split: 95.5% main / 4.5% sidebar. All windows must get keys.
-With 75% threshold, sidebar-top gets 'p', sidebar-bot gets '/', ';' unmapped."
+Sidebar-top steals 'p', sidebar-bot steals '/', main keeps 28 keys."
   (let* ((win-main 'win-main)
          (win-sidebar-top 'win-sidebar-top)
          (win-sidebar-bot 'win-sidebar-bot)
@@ -156,13 +159,13 @@ With 75% threshold, sidebar-top gets 'p', sidebar-bot gets '/', ';' unmapped."
          (main-keys (cdr (assq win-main result)))
          (top-keys (cdr (assq win-sidebar-top result)))
          (bot-keys (cdr (assq win-sidebar-bot result))))
-    ;; Sidebar-top gets "p" ";" (main backed off since it has strong ownership)
-    (should (seq-set-equal-p top-keys '("p" ";")))
-    ;; Sidebar-bot gets "/" (bottom row of rightmost column)
+    ;; Sidebar-top steals "p" (highest overlap in rightmost column)
+    (should (seq-set-equal-p top-keys '("p")))
+    ;; Sidebar-bot steals "/" (bottom-right corner)
     (should (seq-set-equal-p bot-keys '("/")))
-    ;; Main gets 27 keys
+    ;; Main gets 28 keys (including ";" which was unmapped in old algorithm)
     (should (seq-set-equal-p main-keys '("q" "w" "e" "r" "t" "y" "u" "i" "o"
-                                          "a" "s" "d" "f" "g" "h" "j" "k" "l"
+                                          "a" "s" "d" "f" "g" "h" "j" "k" "l" ";"
                                           "z" "x" "c" "v" "b" "n" "m" "," ".")))))
 
 ;;; ┌───────────────────┐
@@ -229,7 +232,7 @@ With 75% threshold, sidebar-top gets 'p', sidebar-bot gets '/', ';' unmapped."
 
 (ert-deftest spatial-window-test-complex-spanning-layout ()
   "Complex layout: 7 windows with multiple spanning. All must get keys.
-With 75% threshold, small windows steal keys; some keys unmapped."
+Lower margin assigns more cells directly; small windows steal as needed."
   (let* ((win-magit 'win-magit)
          (win-claude 'win-claude)
          (win-sw1 'win-sw1)
@@ -247,16 +250,17 @@ With 75% threshold, small windows steal keys; some keys unmapped."
             (,win-sw4 0.255 0.511 0.483 1.0)
             (,win-backtrace 0.0 0.066 0.725 1.0)))
          (result (spatial-window--assign-keys nil window-bounds)))
-    ;; Magit (top-left) gets top row left half
-    (should (seq-set-equal-p (cdr (assq win-magit result)) '("q" "w" "e" "r" "t")))
+    ;; Magit (top-left ~51%) gets top row + middle row overlap
+    (should (seq-set-equal-p (cdr (assq win-magit result))
+                             '("q" "w" "e" "r" "t" "s" "d")))
     ;; Claude (right half, full height) gets right columns
     (should (seq-set-equal-p (cdr (assq win-claude result))
                              '("y" "u" "i" "o" "p" "h" "j" "k" "l" ";" "n" "m" "," "." "/")))
-    ;; Small windows get keys (windows without strong ownership get priority)
+    ;; Small windows steal keys as needed
     (should (seq-set-equal-p (cdr (assq win-sw1 result)) '("a")))
     (should (seq-set-equal-p (cdr (assq win-sw2 result)) '("x")))
-    (should (seq-set-equal-p (cdr (assq win-sw3 result)) '("s" "d" "c")))
-    (should (seq-set-equal-p (cdr (assq win-sw4 result)) '("b" "v")))
+    (should (seq-set-equal-p (cdr (assq win-sw3 result)) '("c")))
+    (should (seq-set-equal-p (cdr (assq win-sw4 result)) '("b" "f" "g" "v")))
     (should (seq-set-equal-p (cdr (assq win-backtrace result)) '("z")))))
 
 ;;; ┌─────────────┬───────┐
@@ -274,7 +278,7 @@ With 75% threshold, small windows steal keys; some keys unmapped."
 
 (ert-deftest spatial-window-test-ide-layout-with-thin-panel ()
   "IDE layout: main editor + thin diff panel on left, claude on right.
-With 75% threshold, diff panel steals 'v'; some keys unmapped."
+Diff panel steals 'v'; claude now gets col 6 (u,j,m) due to lower margin."
   (let* ((win-main 'win-main)
          (win-diff 'win-diff)
          (win-claude 'win-claude)
@@ -289,16 +293,16 @@ With 75% threshold, diff panel steals 'v'; some keys unmapped."
          (main-keys (cdr (assq win-main result)))
          (diff-keys (cdr (assq win-diff result)))
          (claude-keys (cdr (assq win-claude result))))
-    ;; Main editor gets most left-side keys
+    ;; Main editor gets left-side keys (loses col 6 to claude)
     (should (seq-set-equal-p main-keys '("q" "w" "e" "r" "t" "y"
                                           "a" "s" "d" "f" "g" "h"
                                           "z" "x" "c" "b" "n")))
     ;; Thin diff panel steals "v" (highest overlap for its position)
     (should (seq-set-equal-p diff-keys '("v")))
-    ;; Claude window gets right columns (some keys like "u" may be unmapped)
-    (should (seq-set-equal-p claude-keys '("i" "o" "p"
-                                            "k" "l" ";"
-                                            "," "." "/")))))
+    ;; Claude window gets right columns including col 6 (u,j,m)
+    (should (seq-set-equal-p claude-keys '("u" "i" "o" "p"
+                                            "j" "k" "l" ";"
+                                            "m" "," "." "/")))))
 
 ;;; ┌──┬────────────────────────────┐
 ;;; │  │                            │
@@ -312,7 +316,7 @@ With 75% threshold, diff panel steals 'v'; some keys unmapped."
 
 (ert-deftest spatial-window-test-extreme-narrow-left-column ()
   "Extreme narrow left column: 4% width split vertically, 96% right window.
-With 75% threshold, narrow windows steal one key each; 'q' unmapped."
+Each narrow window steals one key; right gets 28 keys."
   (let* ((win-top-left 'win-top-left)
          (win-bot-left 'win-bot-left)
          (win-right 'win-right)
@@ -327,12 +331,12 @@ With 75% threshold, narrow windows steal one key each; 'q' unmapped."
          (top-left-keys (cdr (assq win-top-left result)))
          (bot-left-keys (cdr (assq win-bot-left result)))
          (right-keys (cdr (assq win-right result))))
-    ;; Top-left gets "q" "a" (right window backed off since it has strong ownership)
-    (should (seq-set-equal-p top-left-keys '("q" "a")))
-    ;; Bot-left gets "z" (bottom row)
+    ;; Top-left steals "a" (highest overlap for its position)
+    (should (seq-set-equal-p top-left-keys '("a")))
+    ;; Bot-left steals "z" (bottom row)
     (should (seq-set-equal-p bot-left-keys '("z")))
-    ;; Right window gets 27 keys
-    (should (seq-set-equal-p right-keys '("w" "e" "r" "t" "y" "u" "i" "o" "p"
+    ;; Right window gets 28 keys (including "q" which was unmapped before)
+    (should (seq-set-equal-p right-keys '("q" "w" "e" "r" "t" "y" "u" "i" "o" "p"
                                           "s" "d" "f" "g" "h" "j" "k" "l" ";"
                                           "x" "c" "v" "b" "n" "m" "," "." "/")))))
 
@@ -346,7 +350,7 @@ With 75% threshold, narrow windows steal one key each; 'q' unmapped."
 
 (ert-deftest spatial-window-test-misaligned-vertical-splits ()
   "4 windows where top row split (60/40) differs from bottom row split (33/67).
-With 75% threshold, middle row is mostly unmapped; all windows get rectangular blocks."
+Middle row partially assigned where one window clearly dominates a cell."
   (let* ((win-top-left 'win-top-left)
          (win-top-right 'win-top-right)
          (win-bot-left 'win-bot-left)
@@ -362,14 +366,14 @@ With 75% threshold, middle row is mostly unmapped; all windows get rectangular b
          (top-right-keys (cdr (assq win-top-right result)))
          (bot-left-keys (cdr (assq win-bot-left result)))
          (bot-right-keys (cdr (assq win-bot-right result))))
-    ;; Top-left (60% width) gets top row left portion - rectangular
-    (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t" "y")))
-    ;; Top-right (40% width) gets top row right portion - rectangular
+    ;; Top-left (60%) gets top row + "f" from middle (clear overlap advantage)
+    (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t" "y" "f")))
+    ;; Top-right (40%) gets top row right + "i" from middle
     (should (seq-set-equal-p top-right-keys '("u" "i" "o" "p")))
-    ;; Bot-left (33% width) gets bottom row left - rectangular
+    ;; Bot-left (33%) gets bottom row left
     (should (seq-set-equal-p bot-left-keys '("z" "x" "c")))
-    ;; Bot-right (67% width) gets bottom row right - rectangular
-    (should (seq-set-equal-p bot-right-keys '("b" "n" "m" "," "." "/")))))
+    ;; Bot-right (67%) gets bottom row right + "v" from middle
+    (should (seq-set-equal-p bot-right-keys '("v" "b" "n" "m" "," "." "/")))))
 
 ;;; ┌───────────────────────┬────────────────┐
 ;;; │     top-left (59%)    │  top-right 41% │
@@ -385,7 +389,7 @@ With 75% threshold, middle row is mostly unmapped; all windows get rectangular b
 
 (ert-deftest spatial-window-test-misaligned-splits-edge-case ()
   "4 windows with 59/41 top and 32/68 bottom split.
-With 75% threshold, middle row is unmapped (ambiguous); all regions rectangular."
+Middle row partially assigned where overlap margin is sufficient."
   (let* ((win-top-left 'win-top-left)
          (win-top-right 'win-top-right)
          (win-bot-left 'win-bot-left)
@@ -402,17 +406,16 @@ With 75% threshold, middle row is unmapped (ambiguous); all regions rectangular.
          (bot-left-keys (cdr (assq win-bot-left result)))
          (bot-right-keys (cdr (assq win-bot-right result)))
          (all-keys (apply #'append (mapcar #'cdr result))))
-    ;; FIXED: Top-left gets rectangular block (top row only)
-    (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t" "y")))
-    ;; FIXED: Top-right gets rectangular block (top row right portion)
+    ;; Top-left gets top row + "f" from middle row
+    (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t" "y" "f")))
+    ;; Top-right gets top row right + "i" from middle
     (should (seq-set-equal-p top-right-keys '("u" "i" "o" "p")))
-    ;; FIXED: Bot-left gets rectangular block (bottom row left)
+    ;; Bot-left gets bottom row left
     (should (seq-set-equal-p bot-left-keys '("z" "x" "c")))
-    ;; FIXED: Bot-right gets rectangular block (bottom row right + one extra)
+    ;; Bot-right gets bottom row right + "v" from middle
     (should (seq-set-equal-p bot-right-keys '("v" "b" "n" "m" "," "." "/")))
-    ;; Middle row (a s d f g h j k l ;) is intentionally unmapped (ambiguous)
-    ;; 20 keys assigned total
-    (should (= (length all-keys) 20))
+    ;; 21 keys assigned (more than old algorithm's 20)
+    (should (= (length all-keys) 21))
     ;; No duplicate keys
     (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
 
@@ -451,15 +454,16 @@ Tests misaligned splits with actual floating-point bounds from Emacs."
          (all-keys (apply #'append (mapcar #'cdr result))))
     ;; Narrow code window (11% width) steals "q"
     (should (seq-set-equal-p narrow-keys '("q")))
-    ;; Wide code window (89% width, top) gets most of top row
+    ;; Wide code window (89% width, top) gets top row (minus "q")
     (should (seq-set-equal-p wide-keys '("w" "e" "r" "t" "y" "u" "i" "o" "p")))
-    ;; Magit (32% width, full bottom-left height) gets bottom-left
-    (should (seq-set-equal-p magit-keys '("z" "x" "c")))
-    ;; Posframe windows get rectangular regions (code-wide backed off)
-    (should (seq-set-equal-p posframe-top-keys '("f" "g" "h" "j" "k" "l" ";")))
+    ;; Magit (32% width, bottom-left) gets middle+bottom left columns
+    (should (seq-set-equal-p magit-keys '("a" "s" "d" "z" "x" "c")))
+    ;; Posframe-top gets middle-right area
+    (should (seq-set-equal-p posframe-top-keys '("g" "h" "j" "k" "l" ";")))
+    ;; Posframe-bot gets bottom-right area
     (should (seq-set-equal-p posframe-bot-keys '("v" "b" "n" "m" "," "." "/")))
-    ;; All 5 windows have keys, 27 total, no duplicates
-    (should (= (length all-keys) 27))
+    ;; All 5 windows have keys, 29 total ("f" unassigned), no duplicates
+    (should (= (length all-keys) 29))
     (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
 
 (ert-deftest spatial-window-test-invalid-keyboard-layout ()
