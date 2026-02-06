@@ -475,50 +475,6 @@ Middle row partially assigned where one window clearly dominates a cell."
     ;; Bot-right (67%) gets bottom row right + "v" from middle
     (should (seq-set-equal-p bot-right-keys '("v" "b" "n" "m" "," "." "/")))))
 
-;;; ┌───────────────────────┬────────────────┐
-;;; │  A  59w×50h           │  B  41w×50h    │
-;;; ├──────────┬────────────┴────────────────┤
-;;; │ C 32w    │      D  68w×49h             │
-;;; │   ×49h   │                             │
-;;; └──────────┴─────────────────────────────┘
-;;; A=top-left  B=top-right  C=bot-left  D=bot-right
-;;;
-;;; Row 0: A A A A A A B B B B
-;;; Row 1: · · · A · · · · · ·  ← mostly unassigned (misaligned splits)
-;;; Row 2: C C C D D D D D D D
-
-(ert-deftest spatial-window-test-misaligned-splits-edge-case ()
-  "4 windows with 59/41 top and 32/68 bottom split.
-Middle row partially assigned where overlap margin is sufficient."
-  (let* ((win-top-left 'win-top-left)
-         (win-top-right 'win-top-right)
-         (win-bot-left 'win-bot-left)
-         (win-bot-right 'win-bot-right)
-         ;; Top row: 59%/41% split, Bottom row: 32%/68% split
-         (window-bounds
-          `((,win-top-left 0.001 0.594 0.002 0.5)
-            (,win-top-right 0.594 0.999 0.002 0.5)
-            (,win-bot-left 0.001 0.319 0.5 0.985)
-            (,win-bot-right 0.319 0.999 0.5 0.985)))
-         (result (spatial-window--assign-keys nil window-bounds))
-         (top-left-keys (cdr (assq win-top-left result)))
-         (top-right-keys (cdr (assq win-top-right result)))
-         (bot-left-keys (cdr (assq win-bot-left result)))
-         (bot-right-keys (cdr (assq win-bot-right result)))
-         (all-keys (apply #'append (mapcar #'cdr result))))
-    ;; Top-left gets top row + "f" from middle row
-    (should (seq-set-equal-p top-left-keys '("q" "w" "e" "r" "t" "y" "f")))
-    ;; Top-right gets top row right + "i" from middle
-    (should (seq-set-equal-p top-right-keys '("u" "i" "o" "p")))
-    ;; Bot-left gets bottom row left
-    (should (seq-set-equal-p bot-left-keys '("z" "x" "c")))
-    ;; Bot-right gets bottom row right + "v" from middle
-    (should (seq-set-equal-p bot-right-keys '("v" "b" "n" "m" "," "." "/")))
-    ;; 21 keys assigned (more than old algorithm's 20)
-    (should (= (length all-keys) 21))
-    ;; No duplicate keys
-    (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
-
 ;;; ┌────┬─────────────────────────────┐
 ;;; │ N  │                             │
 ;;; │11w │   W  89w×48h                │
@@ -533,7 +489,7 @@ Middle row partially assigned where overlap margin is sufficient."
 ;;;
 ;;; Row 0: N W W W W W W W W W
 ;;; Row 1: · G · P P P P P P P  ← a,d unassigned (near-50/50 y-split)
-;;; Row 2: G G G · · · · · · ·  ← row 2 right: counts only (P=1, Q=1)
+;;; Row 2: G G G · Q · · P · ·  ← P steals ",", Q steals "v" (near-equal y-split)
 
 (ert-deftest spatial-window-test-real-dev-session-layout ()
   "Real 5-window layout: narrow code window, wide code, magit, two posframes.
@@ -565,14 +521,10 @@ bottom row right unassigned.  posframe-top recovers via steal+consolidation."
     (should (seq-set-equal-p wide-keys '("w" "e" "r" "t" "y" "u" "i" "o" "p")))
     ;; Magit (32% width, bottom-left) gets left columns
     (should (seq-set-equal-p magit-keys '("s" "z" "x" "c")))
-    ;; Posframe-top (keyless) steals middle row + 1 bottom cell via consolidation
-    ;; Gets 8 keys: middle row cols 3-9 + 1 bottom row cell
-    (should (= (length posframe-top-keys) 8))
-    (should (seq-set-equal-p (seq-intersection posframe-top-keys
-                                               '("f" "g" "h" "j" "k" "l" ";"))
-                             '("f" "g" "h" "j" "k" "l" ";")))
-    ;; Posframe-bot gets only 1 key (near-equal y-split with posframe-top)
-    (should (= (length posframe-bot-keys) 1))
+    ;; Posframe-top (keyless) steals middle row + "," from bottom via consolidation
+    (should (seq-set-equal-p posframe-top-keys '("f" "g" "h" "j" "k" "l" ";" ",")))
+    ;; Posframe-bot steals "v" (near-equal y-split with posframe-top)
+    (should (seq-set-equal-p posframe-bot-keys '("v")))
     ;; All 5 windows have keys, 23 total, no duplicates
     (should (= (length all-keys) 23))
     (should (= (length all-keys) (length (delete-dups (copy-sequence all-keys)))))))
