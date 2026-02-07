@@ -16,6 +16,15 @@ Requires Emacs 27.1+ and [posframe](https://github.com/tumashu/posframe).
   :bind ("M-o" . spatial-window-select))
 ```
 
+### Package.el
+
+```elisp
+(use-package spatial-window
+  :vc (:url "https://github.com/lewang/spatial-window"
+       :rev :newest)
+  :bind ("M-o" . spatial-window-select))
+```
+
 ### Manual
 
 ```elisp
