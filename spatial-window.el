@@ -436,16 +436,84 @@ SPC selects minibuffer if active, otherwise passes through."
        (list (spatial-window--state-source-window spatial-window--state))
        "Swap mode: select target window. C-h for hints. C-g to abort."))))
 
+;;; Focus/unfocus mode
+
+(defun spatial-window--save-layout ()
+  "Save the current window configuration to tab or frame storage."
+  (let ((config (current-window-configuration)))
+    (if (bound-and-true-p tab-bar-mode)
+        (let* ((tabs (tab-bar-tabs))
+               (ct (tab-bar--current-tab-find tabs)))
+          (setf (alist-get 'spatial-window-config (cdr ct)) config)
+          (tab-bar-tabs-set tabs))
+      (set-frame-parameter nil 'spatial-window-config config))))
+
+(defun spatial-window--restore-layout ()
+  "Restore saved window configuration.
+Returns non-nil on success, clears saved config."
+  (let ((config (if (bound-and-true-p tab-bar-mode)
+                    (alist-get 'spatial-window-config
+                               (cdr (tab-bar--current-tab-find)))
+                  (frame-parameter nil 'spatial-window-config))))
+    (when config
+      (set-window-configuration config)
+      (if (bound-and-true-p tab-bar-mode)
+          (let* ((tabs (tab-bar-tabs))
+                 (ct (tab-bar--current-tab-find tabs)))
+            (setf (alist-get 'spatial-window-config (cdr ct) nil 'remove) nil)
+            (tab-bar-tabs-set tabs))
+        (set-frame-parameter nil 'spatial-window-config nil))
+      t)))
+
+(defun spatial-window--has-saved-layout-p ()
+  "Return non-nil if a saved window configuration exists."
+  (if (bound-and-true-p tab-bar-mode)
+      (alist-get 'spatial-window-config
+                 (cdr (tab-bar--current-tab-find)))
+    (frame-parameter nil 'spatial-window-config)))
+
+(defun spatial-window--focus-by-key ()
+  "Focus on the window corresponding to the pressed key.
+Saves layout, selects target, deletes all other windows."
+  (interactive)
+  (spatial-window--with-target-window
+    (spatial-window--exit-selection-mode)
+    (spatial-window--save-layout)
+    (select-window win)
+    (let ((ignore-window-parameters t))
+      (delete-other-windows win))
+    (message "Focused window (unfocus to restore)")))
+
+(defun spatial-window--enter-focus-mode ()
+  "Enter focus mode for zooming into a single window."
+  (spatial-window--setup-transient-mode
+   (spatial-window--make-mode-keymap #'spatial-window--focus-by-key)
+   nil
+   "Select window to focus. C-h for hints. C-g to abort."))
+
+(defun spatial-window--unfocus ()
+  "Restore the previously saved window layout."
+  (if (spatial-window--restore-layout)
+      (message "Restored window layout")
+    (message "No saved layout to restore")))
+
 ;;; Action prompt
 
 (defun spatial-window--prompt-action ()
   "Prompt for action type and dispatch.
-k = kill, K = kill-multi, s = swap."
-  (let ((action (read-char-choice "(k)ill, (K) multi-kill, or (s)wap: " '(?k ?K ?s))))
+k = kill, K = kill-multi, s = swap, f = focus, u = unfocus."
+  (let* ((has-saved (spatial-window--has-saved-layout-p))
+         (prompt (concat "(k)ill, (K) multi-kill, (s)wap, (f)ocus"
+                         (when has-saved ", (u)nfocus")
+                         ": "))
+         (chars (append '(?k ?K ?s ?f) (when has-saved '(?u))))
+         (action (read-char-choice prompt chars)))
     (pcase action
       (?k (spatial-window--enter-kill-mode))
       (?K (spatial-window--enter-kill-multi-mode))
-      (?s (spatial-window--enter-swap-mode)))))
+      (?s (spatial-window--enter-swap-mode))
+      (?f (spatial-window--enter-focus-mode))
+      (?u (spatial-window--unfocus)))))
 
 ;;;###autoload
 (defun spatial-window-select (&optional arg)
@@ -456,6 +524,8 @@ With prefix ARG (\\[universal-argument]), prompt for action:
   k - Kill: select one window to delete
   K - Multi-kill: select multiple windows, RET to delete them
   s - Swap: exchange buffers between windows
+  f - Focus: zoom into a single window, saving the layout
+  u - Unfocus: restore the saved layout (only shown when available)
 
 When `spatial-window-expert-mode' is non-nil, overlays are hidden by
 default.  Press C-h to toggle them."
